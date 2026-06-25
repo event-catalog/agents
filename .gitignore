@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.agents/
+.claude/
+skills-lock.json
+.env
+.DS_Store
+npm-debug.log*
+.vitest-evals/
+vitest-results.json
+
+# This project uses pnpm; npm's lockfile should not be committed.
+package-lock.json

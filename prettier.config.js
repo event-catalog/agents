@@ -1,0 +1,21 @@
+/** @type {import("prettier").Config} */
+const config = {
+  semi: true,
+  singleQuote: true,
+  printWidth: 130,
+  tabWidth: 2,
+  useTabs: false,
+  trailingComma: 'es5',
+  bracketSpacing: true,
+  plugins: ['prettier-plugin-astro'],
+  overrides: [
+    {
+      files: '*.astro',
+      options: {
+        parser: 'astro',
+      },
+    },
+  ],
+};
+
+export default config;

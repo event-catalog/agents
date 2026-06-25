@@ -1,0 +1,10 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OrderConfirmed",
+  "type": "object",
+  "properties": {
+    "orderId": { "type": "string" },
+    "orderStatus": { "type": "string" }
+  },
+  "required": ["orderId", "orderStatus"]
+}

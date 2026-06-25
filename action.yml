@@ -1,0 +1,68 @@
+name: EventCatalog Agents
+description: AI agents that keep your EventCatalog documentation in sync with your code. Runs in CI as a GitHub Action.
+
+inputs:
+  catalog-repo:
+    description: EventCatalog repository to check out, in owner/repo format.
+    required: true
+  catalog-ref:
+    description: Branch to check out from the EventCatalog repository and target with documentation pull requests.
+    required: false
+    default: main
+  catalog-token:
+    description: Optional token used to check out the EventCatalog repository. Defaults to github.token.
+    required: false
+  model:
+    description: 'Model specifier for the documentation agent. See available models: https://pi.dev/models'
+    required: false
+    default: anthropic/claude-sonnet-4-6
+  ignore-paths:
+    description: Comma-separated paths or glob patterns to ignore when collecting pull request changed files.
+    required: false
+    default: node_modules,dist,build,coverage,.next,.nuxt,.output,.svelte-kit,.astro,.turbo,.cache,.vite,.vercel,.netlify,out,target,bin,obj,vendor
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 11
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+
+    - name: Checkout EventCatalog
+      uses: actions/checkout@v7
+      with:
+        repository: ${{ inputs.catalog-repo }}
+        ref: ${{ inputs.catalog-ref }}
+        token: ${{ inputs.catalog-token || github.token }}
+        path: eventcatalog
+
+    - name: Install action dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: pnpm install --prod=false --frozen-lockfile
+
+    - name: Run EventCatalog Flue workflow
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        EVENTCATALOG_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        EVENTCATALOG_MODEL: ${{ inputs.model }}
+        EVENTCATALOG_CATALOG_REF: ${{ inputs.catalog-ref }}
+        EVENTCATALOG_CATALOG_REPO: ${{ inputs.catalog-repo }}
+        EVENTCATALOG_CATALOG_PATH: eventcatalog
+        EVENTCATALOG_CATALOG_TOKEN: ${{ inputs.catalog-token || github.token }}
+        EVENTCATALOG_GITHUB_REPOSITORY: ${{ github.repository }}
+        EVENTCATALOG_GITHUB_TOKEN: ${{ github.token }}
+        EVENTCATALOG_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        EVENTCATALOG_IGNORE_PATHS: ${{ inputs.ignore-paths }}
+        EVENTCATALOG_PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        payload="$(node --input-type=module -e 'console.log(JSON.stringify({ baseSha: process.env.EVENTCATALOG_BASE_SHA || undefined, catalogPath: process.env.EVENTCATALOG_CATALOG_PATH, catalogRepo: process.env.EVENTCATALOG_CATALOG_REPO, headSha: process.env.EVENTCATALOG_HEAD_SHA || undefined, ignorePaths: process.env.EVENTCATALOG_IGNORE_PATHS, model: process.env.EVENTCATALOG_MODEL, workspace: process.env.GITHUB_WORKSPACE }))')"
+        npx flue run pr-review \
+          --root "$GITHUB_ACTION_PATH" \
+          --target node \
+          --payload "$payload"

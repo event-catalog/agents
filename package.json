@@ -1,0 +1,36 @@
+{
+  "name": "eventcatalog-agents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck:evals": "tsc --noEmit --project tsconfig.evals.json",
+    "evals": "vitest run --config vitest.config.ts",
+    "evals:watch": "vitest --config vitest.config.ts",
+    "evals:record": "VITEST_EVALS_REPLAY_MODE=record vitest run --config vitest.config.ts",
+    "evals:json": "vitest run --config vitest.config.ts --reporter=json --outputFile=vitest-results.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm run build && pnpm run typecheck:evals && pnpm run evals"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@eventcatalog/sdk": "^2.24.2",
+    "@flue/cli": "^1.0.0-beta.1",
+    "@flue/runtime": "^1.0.0-beta.1",
+    "octokit": "^5.0.5",
+    "posthog-node": "^4.18.0",
+    "valibot": "^1.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "prettier": "^3.8.4",
+    "prettier-plugin-astro": "^0.14.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9",
+    "vitest-evals": "^0.14.0"
+  }
+}

@@ -1,0 +1,8 @@
+allowBuilds:
+  '@google/genai': false
+  '@mongodb-js/zstd': false
+  esbuild: false
+  node-liblzma: false
+  protobufjs: false
+  sharp: false
+  workerd: false
