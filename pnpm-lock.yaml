@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@eventcatalog/sdk':
-        specifier: ^2.24.2
-        version: 2.24.2
+        specifier: 2.24.1
+        version: 2.24.1
       '@flue/cli':
         specifier: ^1.0.0-beta.1
         version: 1.0.0-beta.1(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(@types/node@24.13.2)(esbuild@0.28.1)(typebox@1.1.38)(typescript@5.9.3)(workerd@1.20260617.1)(wrangler@4.103.0)(ws@8.21.0)(yaml@2.9.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)
@@ -404,8 +404,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@eventcatalog/sdk@2.24.2':
-    resolution: {integrity: sha512-IocXHSU8FFKn6DwjgKT8iS8jTk8Mi0w7Smjl1US+L1FmIAoNqCUK2NTyYPNcDK/1OggYD02FuoDX2UpOkg9rHQ==}
+  '@eventcatalog/sdk@2.24.1':
+    resolution: {integrity: sha512-P3qiHFRIowpVydbv0NE7HdU6NvOhaF5qW89h1lAKtk8exYuvxnm68D5sTAa3yui6JLEfAF4p8Zim5d4crYupwQ==}
 
   '@flue/cli@1.0.0-beta.1':
     resolution: {integrity: sha512-XbSsn7Nl2/J80Y+7Ph7tLF0Y3+doVdBXD8rPikuaMeq4mhHYSn5DjOwgXS2+TdzKcpOKyNVwttORyoVAjWdbtA==}
@@ -2836,7 +2836,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@eventcatalog/sdk@2.24.2':
+  '@eventcatalog/sdk@2.24.1':
     dependencies:
       fs-extra: 11.3.5
       glob: 13.0.6
