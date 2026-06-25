@@ -59,7 +59,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: event-catalog/eventcatalog-actions@main
+      - uses: event-catalog/agents@main
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
