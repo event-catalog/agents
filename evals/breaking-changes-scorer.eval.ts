@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import type { BreakingChangeResponse, SchemaConsumersResponse } from '@/src/review-output';
+import { buildDetectBreakingSchemaChangePrompt } from '@/src/prompts/detect-breaking-schema-changes';
 import { getChangedSchemaFiles } from '@/src/utils/schema-detection';
 import { scoreBreakingChange, scoreConsumers } from './support/breaking-changes-scorers';
 import { orderConfirmedBreaking, orderConfirmedAdditive } from './fixtures/breaking-change-order-confirmed/scenario';
@@ -101,4 +102,10 @@ test('honors a custom schema-extensions list (e.g. adding .js)', () => {
   // Only .js is requested here, so the .json schema is excluded and the .js contract is included.
   const matched = getChangedSchemaFiles(files, ['.js']).map((f) => f.fileName);
   expect(matched).toEqual(['contracts/messages.js']);
+});
+
+test('instructs the detector to return raw diff lines without markdown wrappers', () => {
+  const prompt = buildDetectBreakingSchemaChangePrompt(changed('events/OrderConfirmed/schema.json'));
+  expect(prompt).toContain('In breakingChanges[].lines, return raw diff lines only.');
+  expect(prompt).toContain('Do not wrap them in markdown fences, bullets, headings, or prose.');
 });

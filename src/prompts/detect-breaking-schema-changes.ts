@@ -29,7 +29,8 @@ Treat these as non-breaking (additive):
 
 Return a structured result for THIS file:
 - Set isBreaking and a confidence level.
-- For each breaking change, copy the exact diff line(s) that introduce it so they can be highlighted in the pull request.
+- For each breaking change, copy the exact raw diff line(s) that introduce it so they can be highlighted in the pull request.
+- In breakingChanges[].lines, return raw diff lines only. Do not wrap them in markdown fences, bullets, headings, or prose.
 - Keep the summary concise and written for the pull request author.`;
 
 /** Scores a single changed schema file for breaking changes. Does not edit files. */

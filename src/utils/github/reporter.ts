@@ -44,6 +44,26 @@ const formatResult = (result: unknown): string => {
   return String(result ?? 'No review output was returned.');
 };
 
+const maxBacktickRun = (value: string): number => Math.max(0, ...Array.from(value.matchAll(/`+/g), (match) => match[0].length));
+
+const formatCodeBlock = (value: string, language = ''): string => {
+  const content = value.replace(/\r\n?/g, '\n').trimEnd() || '(No diff lines returned.)';
+  const fence = '`'.repeat(Math.max(3, maxBacktickRun(content) + 1));
+  const languageSuffix = language ? language : '';
+
+  return `${fence}${languageSuffix}\n${content}\n${fence}`;
+};
+
+const formatInlineCode = (value: string): string => {
+  const content = value.replace(/\s+/g, ' ').trim();
+  const fence = '`'.repeat(Math.max(1, maxBacktickRun(content) + 1));
+  const padding = content.includes('`') ? ' ' : '';
+
+  return `${fence}${padding}${content || '(empty)'}${padding}${fence}`;
+};
+
+const formatInlineText = (value: string): string => value.replace(/\s+/g, ' ').trim();
+
 const formatReviewComment = ({ catalogPath, catalogPullRequestUrl, changedFiles, result }: ReviewCommentInput): string => {
   const files = changedFiles.length > 0 ? changedFiles.map((file) => `- \`${file}\``).join('\n') : '- No files reviewed';
   const summary = truncate(formatResult(result), MAX_RESULT_CHARS);
@@ -122,28 +142,34 @@ export interface BreakingSchemaReport {
   consumers: SchemaConsumersResponse['consumers'];
 }
 
-const formatBreakingChangesComment = (reports: BreakingSchemaReport[]): string => {
+export const formatBreakingChangesComment = (reports: BreakingSchemaReport[]): string => {
   const sections = reports
     .map(({ breakingChange, consumers }) => {
       const changes =
         breakingChange.breakingChanges.length > 0
           ? breakingChange.breakingChanges
-              .map((change) => `- ${change.change}\n\n  \`\`\`diff\n${change.lines}\n  \`\`\``)
-              .join('\n')
+              .map(
+                (change, index) =>
+                  `**${index + 1}. ${formatInlineText(change.change)}**\n\n${formatCodeBlock(change.lines, 'diff')}`
+              )
+              .join('\n\n')
           : '- No specific lines were highlighted.';
 
       const consumersList =
         consumers.length > 0
           ? consumers
-              .map((consumer) => `- \`${consumer.id}\` (${consumer.type}) — ${consumer.reason}\n  - \`${consumer.path}\``)
+              .map(
+                (consumer) =>
+                  `- ${formatInlineCode(consumer.id)} (${formatInlineText(consumer.type)}, ${formatInlineText(consumer.version)}) - ${formatInlineText(consumer.reason)}\n  Path: ${formatInlineCode(consumer.path)}`
+              )
               .join('\n')
           : '- No consumers of this schema were found in the EventCatalog.';
 
-      return `### \`${breakingChange.fileName}\`
+      return `### ${formatInlineCode(breakingChange.fileName)}
 
-**Confidence:** ${breakingChange.confidence}
+**Confidence:** ${formatInlineText(breakingChange.confidence)}
 
-${breakingChange.summary}
+${formatInlineText(breakingChange.summary)}
 
 #### Breaking changes
 
@@ -156,10 +182,6 @@ ${consumersList}`;
     .join('\n\n');
 
   return `${BREAKING_CHANGES_COMMENT_MARKER}
-# EventCatalog Breaking Changes
-
-The Breaking Changes agent detected schema changes in this pull request that may affect downstream consumers documented in your EventCatalog.
-
 ${sections}
 `;
 };
