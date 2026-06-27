@@ -7,7 +7,9 @@ agent. Keep this distinction in mind when naming things and writing docs: reach 
 behavior, and "the action" only for GitHub Action mechanics (inputs, checkout, `$GITHUB_ACTION_PATH`,
 permissions).
 
-The first agent is **Code-to-Docs**, a PR reviewer that:
+There are two agents today. Each Action invocation runs exactly one, selected by the `agent` input.
+
+**Code-to-Docs** (`agent: code-to-docs`, workflow `pr-review`) is a PR reviewer that:
 
 - reads source pull request diffs,
 - understands services, events, commands, queries, schemas, channels, containers, and domain changes,
@@ -16,38 +18,60 @@ The first agent is **Code-to-Docs**, a PR reviewer that:
 - opens or updates a pull request in the catalog repository,
 - comments back on the source pull request with a concise summary and catalog PR link.
 
-Keep deterministic behavior in TypeScript. Let the agent reason about documentation changes, but keep
-GitHub writes, path resolution, diff parsing, token preflight, impact-plan enforcement, and catalog
-change detection explicit in code.
+**Breaking Changes** (`agent: breaking-changes`, workflow `breaking-changes`) is a read-only PR
+reviewer that:
+
+- finds changed message schema files in the diff (`.json`, `.yml`, Avro, Protobuf, GraphQL, etc.),
+- scores each schema change for whether it is breaking for existing consumers,
+- traces breaking changes through the catalog to the resources that consume the message,
+- comments back on the source pull request with the breaking lines and affected consumers.
+- It never edits the catalog.
+
+Keep deterministic behavior in TypeScript. Let the agents reason about documentation and breakage,
+but keep GitHub writes, path resolution, diff parsing, token preflight, impact-plan enforcement, and
+catalog change detection explicit in code.
 
 ## Project Structure
 
 - `action.yml` — composite GitHub Action. Sets up pnpm and Node 24, checks out the configured catalog
-  repo into `eventcatalog/`, installs dependencies into `$GITHUB_ACTION_PATH`, and runs
-  `pnpm exec flue run pr-review --root "$GITHUB_ACTION_PATH" --target node`.
+  repo into `eventcatalog/`, installs dependencies into `$GITHUB_ACTION_PATH`, then maps the `agent`
+  input to its workflow (`code-to-docs` → `pr-review`, `breaking-changes` → `breaking-changes`) and
+  runs `pnpm exec flue run <workflow> --root "$GITHUB_ACTION_PATH" --target node`.
 - `flue.config.ts` — Flue config for the Node target.
-- `src/workflows/pr-review.ts` — the one-shot workflow orchestrating PR review and catalog update.
+- `src/workflows/pr-review.ts` — the Code-to-Docs workflow orchestrating PR review and catalog update.
+- `src/workflows/breaking-changes.ts` — the Breaking Changes workflow: detect schema changes, score
+  them, trace consumers, and comment back. Read-only.
 - `src/agents/code-to-docs.ts` — Flue agent: model selection, sandbox setup, EventCatalog skill
   registration, and `dump_catalog` / `linter` tool wiring.
-- `src/prompts/` — the agent prompts run by the workflow:
-  - `create-documentation-plan-from-code-changes.ts` — the read-only impact-planning pass.
-  - `apply-documentation-plan-to-catalog.ts` — applies the approved plan to the catalog.
+- `src/agents/breaking-changes.ts` — read-only Flue agent for the Breaking Changes workflow
+  (`dump_catalog` only, no linter; contract-focused instructions).
+- `src/prompts/` — the agent prompts run by the workflows:
+  - `create-documentation-plan-from-code-changes.ts` — Code-to-Docs read-only impact-planning pass.
+  - `apply-documentation-plan-to-catalog.ts` — Code-to-Docs: applies the approved plan to the catalog.
+  - `detect-breaking-schema-changes.ts` — Breaking Changes: scores one schema diff.
+  - `find-schema-consumers.ts` — Breaking Changes: traces a breaking schema to its catalog consumers.
 - `src/skills/eventcatalog-documentation/` — local Agent Skill (`SKILL.md` + `references/`) telling
   the agent how to generate EventCatalog resources correctly.
 - `src/tools/dump-catalog.ts` — deterministic tool returning the EventCatalog SDK catalog dump.
 - `src/tools/linter.ts` — deterministic tool that lints the catalog after changes.
 - `src/utils/eventcatalog-utils.ts` — catalog path resolution and catalog checkout inspection.
 - `src/utils/diff.ts` — changed-file discovery and ignore-path filtering.
+- `src/utils/schema-detection.ts` — pure helper: which changed files are message schemas (Breaking
+  Changes).
 - `src/utils/impact-plan.ts` — detects catalog changes made outside the approved impact plan.
 - `src/utils/github/catalog-pr.ts` — catalog repo preflight, git commit/push, and catalog PR
   create/update logic.
-- `src/utils/github/reporter.ts` — source PR summary comment create/update logic.
-- `src/utils/analytics.ts` — anonymous PostHog usage analytics (one event per run).
-- `src/review-output.ts` — Valibot schemas for the structured agent responses (impact plan + result).
+- `src/utils/github/reporter.ts` — source PR comment create/update logic (one self-updating comment
+  per agent: Code-to-Docs summary and Breaking Changes report use separate markers).
+- `src/utils/analytics.ts` — anonymous PostHog usage analytics (one event per run, per agent).
+- `src/review-output.ts` — Valibot schemas for the structured agent responses (impact plan + apply
+  result; breaking-change score + schema consumers).
 - `evals/` — the eval suite that runs the real agent against fixtures. See `evals/README.md`.
 - `README.md` — user-facing action usage and setup notes.
 
 ## Runtime Flow
+
+### Code-to-Docs (`pr-review`)
 
 The `pr-review` workflow does the following:
 
@@ -69,6 +93,20 @@ The `pr-review` workflow does the following:
 9. Create or update the source PR summary comment with the high-level summary and catalog PR link.
 10. Send one anonymous analytics event describing the run outcome (see Safety / Analytics below).
 
+### Breaking Changes (`breaking-changes`)
+
+The `breaking-changes` workflow is read-only and does the following:
+
+1. Resolve config and collect changed source files (same as Code-to-Docs). Exit early if none.
+2. Narrow to changed schema files via `getChangedSchemaFiles`. Exit early if the PR touches no schemas.
+3. **Detect**: for each schema, run the read-only `detect-breaking-schema-changes` prompt. Drop any
+   change scored non-breaking.
+4. **Trace**: for each breaking change, run the read-only `find-schema-consumers` prompt, which uses
+   `dump_catalog` to resolve the owning resource and find its consumers (producers are excluded).
+5. Post (or update) a single Breaking Changes comment on the source PR. If no breaking changes are
+   found, or none have catalog consumers, log it and skip the comment.
+6. Send one anonymous analytics event describing the run outcome.
+
 The catalog checkout path is intentionally `eventcatalog/` under `$GITHUB_WORKSPACE`. In TypeScript,
 always resolve it through `resolveCatalogPath(config)` before passing it to SDKs, tools, or git
 operations.
@@ -77,6 +115,7 @@ operations.
 
 | Input           | Default                       | Description                                                    |
 | --------------- | ----------------------------- | -------------------------------------------------------------- |
+| `agent`         | `code-to-docs`                | Which agent to run: `code-to-docs` or `breaking-changes`.      |
 | `catalog-repo`  | _(required)_                  | `owner/repo` catalog repository.                               |
 | `catalog-ref`   | `main`                        | Target catalog branch.                                         |
 | `catalog-token` | `github.token`                | Token used to check out, push to, and open PRs in the catalog. |

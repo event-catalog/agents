@@ -20,6 +20,10 @@ inputs:
     description: Comma-separated paths or glob patterns to ignore when collecting pull request changed files.
     required: false
     default: node_modules,dist,build,coverage,.next,.nuxt,.output,.svelte-kit,.astro,.turbo,.cache,.vite,.vercel,.netlify,out,target,bin,obj,vendor
+  agent:
+    description: 'Which agent to run on each pull request. Available: code-to-docs, breaking-changes.'
+    required: false
+    default: code-to-docs
 
 runs:
   using: composite
@@ -45,7 +49,7 @@ runs:
       working-directory: ${{ github.action_path }}
       run: pnpm install --prod=false --frozen-lockfile
 
-    - name: Run EventCatalog Flue workflow
+    - name: Run EventCatalog agents
       shell: bash
       working-directory: ${{ github.action_path }}
       env:
@@ -60,9 +64,23 @@ runs:
         EVENTCATALOG_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         EVENTCATALOG_IGNORE_PATHS: ${{ inputs.ignore-paths }}
         EVENTCATALOG_PR_NUMBER: ${{ github.event.pull_request.number }}
+        EVENTCATALOG_AGENT: ${{ inputs.agent }}
       run: |
         payload="$(node --input-type=module -e 'console.log(JSON.stringify({ baseSha: process.env.EVENTCATALOG_BASE_SHA || undefined, catalogPath: process.env.EVENTCATALOG_CATALOG_PATH, catalogRepo: process.env.EVENTCATALOG_CATALOG_REPO, headSha: process.env.EVENTCATALOG_HEAD_SHA || undefined, ignorePaths: process.env.EVENTCATALOG_IGNORE_PATHS, model: process.env.EVENTCATALOG_MODEL, workspace: process.env.GITHUB_WORKSPACE }))')"
-        npx flue run pr-review \
+
+        # Map the requested agent to its Flue workflow. To run more than one agent, add another
+        # step (or workflow file) with a different `agent`.
+        agent="$(echo "$EVENTCATALOG_AGENT" | xargs)" # trim whitespace
+        case "$agent" in
+          code-to-docs) workflow="pr-review" ;;
+          breaking-changes) workflow="breaking-changes" ;;
+          *)
+            echo "::error::Unknown EventCatalog agent '$agent'. Available: code-to-docs, breaking-changes."
+            exit 1
+            ;;
+        esac
+
+        npx flue run "$workflow" \
           --root "$GITHUB_ACTION_PATH" \
           --target node \
           --payload "$payload"
