@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import type { BreakingChangeResponse, SchemaConsumersResponse } from '@/src/review-output';
 import { buildDetectBreakingSchemaChangePrompt } from '@/src/prompts/detect-breaking-schema-changes';
+import { buildFindSchemaConsumersPrompt } from '@/src/prompts/find-schema-consumers';
 import { getChangedSchemaFiles } from '@/src/utils/schema-detection';
 import { scoreBreakingChange, scoreConsumers } from './support/breaking-changes-scorers';
 import { orderConfirmedBreaking, orderConfirmedAdditive } from './fixtures/breaking-change-order-confirmed/scenario';
@@ -37,6 +38,8 @@ const consumers: SchemaConsumersResponse['consumers'] = [
     id: 'NotificationsService',
     version: '1.0.0',
     type: 'service',
+    summary: 'Sends customer notifications when orders change.',
+    owners: ['notifications-team'],
     path: 'domains/Notifications/services/NotificationsService',
     reason: 'Receives the OrderConfirmed event.',
   },
@@ -74,6 +77,8 @@ test('penalizes reporting the producer as a consumer', () => {
       id: 'OrdersService',
       version: '1.0.0',
       type: 'service',
+      summary: 'Handles the lifecycle of customer orders.',
+      owners: ['orders-team'],
       path: 'domains/Orders/services/OrdersService',
       reason: 'Sends the event.',
     },
@@ -108,4 +113,11 @@ test('instructs the detector to return raw diff lines without markdown wrappers'
   const prompt = buildDetectBreakingSchemaChangePrompt(changed('events/OrderConfirmed/schema.json'));
   expect(prompt).toContain('In breakingChanges[].lines, return raw diff lines only.');
   expect(prompt).toContain('Do not wrap them in markdown fences, bullets, headings, or prose.');
+});
+
+test('instructs the consumer tracer to return table metadata and raw Mermaid syntax', () => {
+  const prompt = buildFindSchemaConsumersPrompt(breakingResult, '/tmp/catalog');
+  expect(prompt).toContain('summary, owners, path relative to the catalog root');
+  expect(prompt).toContain('Return raw Mermaid flowchart syntax in `diagram`');
+  expect(prompt).toContain('Do not wrap it in markdown fences.');
 });

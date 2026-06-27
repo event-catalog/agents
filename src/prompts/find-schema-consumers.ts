@@ -20,9 +20,11 @@ Use the \`dump_catalog\` tool to get an index of the EventCatalog (${catalogPath
 2. If you can find the resource (e.g message/service/domain) the schema belong too, then you have the resource id and version in the markdown file.
 3. With the resource id and version of the owner of the schema, you can grep and understand who is consuming this resouce. For example a service is a consumer if it "recieves" (in the frontmatter property) this schema resource (e.g OrderPlaced Event)
 4. A resource (E.g service) that sends the message is the producer, not a consumer; focus on consumers that could break.
-5. Return each affected consumer with its id, version, type, path relative to the catalog root, and a short reason explaining why it is affected.
+5. Return each affected consumer with its id, version, type, summary, owners, path relative to the catalog root, and a short reason explaining why it is affected.
+6. Use the consumer summary and owners from the catalog front matter or the \`dump_catalog\` result. If a consumer has no summary, return an empty string. If it has no owners, return an empty owners array.
+7. Return raw Mermaid flowchart syntax in \`diagram\` that shows the producer or owning resource, the changed contract, and the affected consumers. Do not wrap it in markdown fences. Use only real resource ids you found in the catalog. Use an empty string if you cannot resolve enough resources for a useful diagram.
 
-If you cannot resolve the schema to a catalog resource, or it has no consumers, return an empty consumers array. Do not invent resources; only report consumers you can find in the catalog.`;
+If you cannot resolve the schema to a catalog resource, or it has no consumers, return an empty consumers array and an empty diagram. Do not invent resources; only report consumers you can find in the catalog.`;
 
 /** Finds the catalog consumers of a breaking schema change. Does not edit files. */
 export const findSchemaConsumers = async (

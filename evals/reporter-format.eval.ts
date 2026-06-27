@@ -30,10 +30,19 @@ test('formats breaking-change diff snippets as top-level fenced code blocks', ()
           id: 'InventoryService',
           version: '0.0.2',
           type: 'service',
+          summary: 'Keeps inventory in sync with confirmed orders.',
+          owners: ['inventory-team'],
           path: '/domains/Orders/services/InventoryService',
           reason: 'Receives OrderConfirmed and depends on this payload.',
         },
       ],
+      diagram: [
+        '```mermaid',
+        'flowchart LR',
+        '  OrdersService[OrdersService] --> OrderConfirmed[OrderConfirmed]',
+        '  OrderConfirmed --> InventoryService[InventoryService]',
+        '```',
+      ].join('\n'),
     },
   ];
 
@@ -46,7 +55,13 @@ test('formats breaking-change diff snippets as top-level fenced code blocks', ()
   expect(comment).toContain('**1. Removed the `totalAmount` property from the schema.**');
   expect(comment).toContain('````diff\n```\n- "totalAmount": {');
   expect(comment).toContain('+ "required": ["orderId"]\n```\n````');
+  expect(comment).toContain('#### Impact diagram');
+  expect(comment).toContain('```mermaid\nflowchart LR');
+  expect(comment).not.toContain('```mermaid\n```mermaid');
   expect(comment).toContain('#### Affected consumers');
-  expect(comment).toContain('- `InventoryService` (service, 0.0.2) - Receives OrderConfirmed and depends on this payload.');
+  expect(comment).toContain('| Name | Version | Summary | Owners | Why affected | Path |');
+  expect(comment).toContain(
+    '| InventoryService | 0.0.2 | Keeps inventory in sync with confirmed orders. | inventory-team | Receives OrderConfirmed and depends on this payload. | /domains/Orders/services/InventoryService |'
+  );
   expect(comment).not.toMatch(/^  `{3,}/m);
 });

@@ -41,6 +41,8 @@ export type BreakingChangesEvalOutput = {
   breakingChange: BreakingChangeResponse;
   /** Consumers traced from the catalog, when the consumer phase ran. */
   consumers: SchemaConsumersResponse['consumers'];
+  /** Mermaid impact diagram returned by the consumer tracing phase. Empty for detect-only evals. */
+  diagram: SchemaConsumersResponse['diagram'];
   /** Every tool the agent invoked, in order. */
   toolCalls: { name: string; phase: 'detect' | 'consumers' }[];
   usage: UsageTotals;
@@ -107,14 +109,14 @@ const runScenario = async (input: BreakingChangesEvalInput): Promise<BreakingCha
     const breakingChange = await detectBreakingSchemaChange(session, input.schemaFile);
 
     if (input.detectOnly) {
-      return { breakingChange, consumers: [], toolCalls, usage };
+      return { breakingChange, consumers: [], diagram: '', toolCalls, usage };
     }
 
     // 2. Trace the schema to its catalog consumers (the real production prompt).
     phase = 'consumers';
-    const { consumers } = await findSchemaConsumers(session, breakingChange, catalogPath);
+    const { consumers, diagram } = await findSchemaConsumers(session, breakingChange, catalogPath);
 
-    return { breakingChange, consumers, toolCalls, usage };
+    return { breakingChange, consumers, diagram, toolCalls, usage };
   } finally {
     unobserve();
     await rm(workspace, { recursive: true, force: true });

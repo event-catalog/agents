@@ -136,12 +136,26 @@ export const schemaConsumersResponse = v.object({
       'The EventCatalog resource this schema belongs to, such as the message/service/domain id. Empty if it could not be resolved.'
     )
   ),
+  diagram: v.pipe(
+    v.string(),
+    v.description(
+      'A Mermaid flowchart showing producer/owning resource -> changed contract -> affected consumers. Empty when no diagram can be produced.'
+    )
+  ),
   consumers: v.pipe(
     v.array(
       v.object({
         id: v.pipe(v.string(), v.description('Id of the consuming catalog resource.')),
         version: v.pipe(v.string(), v.description('Version of the consuming catalog resource.')),
         type: v.pipe(v.string(), v.description('Type of the consuming resource: service, domain, message, flow, and similar.')),
+        summary: v.pipe(
+          v.string(),
+          v.description('Summary of the consuming catalog resource. Empty if the catalog has no summary.')
+        ),
+        owners: v.pipe(
+          v.array(v.string()),
+          v.description('Owner team/user ids for the consuming resource. Empty if none are documented.')
+        ),
         path: v.pipe(v.string(), v.description('Path to the consuming resource relative to the EventCatalog root.')),
         reason: v.pipe(v.string(), v.description('Why this resource is affected, e.g. "Receives the OrderPlaced event".')),
       })

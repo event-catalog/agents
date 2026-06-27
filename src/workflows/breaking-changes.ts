@@ -83,9 +83,9 @@ async function review({ init }: FlueContext<ReviewPayload>, config: ReviewConfig
   // 3. For each breaking change, trace the schema to the catalog resources that consume it (read-only).
   const reports: BreakingSchemaReport[] = [];
   for (const breakingChange of breakingChanges) {
-    const { consumers } = await findSchemaConsumers(session, breakingChange, catalogPath);
+    const { consumers, diagram } = await findSchemaConsumers(session, breakingChange, catalogPath);
     console.error(`[eventcatalog:flue] ${breakingChange.fileName}: found ${consumers.length} affected consumer(s)`);
-    reports.push({ breakingChange, consumers });
+    reports.push({ breakingChange, consumers, diagram });
   }
 
   // 4. Report the breaking changes and any affected consumers back on the source pull request.

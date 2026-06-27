@@ -8,6 +8,7 @@ type CatalogResource = {
   };
   id?: string;
   name?: string;
+  owners?: unknown;
   summary?: string;
   version?: string;
 };
@@ -35,6 +36,7 @@ type CatalogDump = {
 type CatalogIndexResource = {
   id: string;
   name?: string;
+  owners: string[];
   path?: string;
   summary?: string;
   type: string;
@@ -42,6 +44,21 @@ type CatalogIndexResource = {
 };
 
 const isVersionedPath = (path: string | undefined): boolean => path?.split('/').includes('versioned') ?? false;
+
+const normalizeOwners = (owners: unknown): string[] =>
+  Array.isArray(owners)
+    ? owners.flatMap((owner) => {
+        if (typeof owner === 'string') {
+          return [owner];
+        }
+
+        if (owner && typeof owner === 'object' && 'id' in owner && typeof owner.id === 'string') {
+          return [owner.id];
+        }
+
+        return [];
+      })
+    : [];
 
 const compactResource = (type: string, resource: CatalogResource): CatalogIndexResource | undefined => {
   if (!resource.id || isVersionedPath(resource._eventcatalog?.directory)) {
@@ -53,7 +70,9 @@ const compactResource = (type: string, resource: CatalogResource): CatalogIndexR
   return {
     id: resource.id,
     name: resource.name,
+    owners: normalizeOwners(resource.owners),
     path,
+    summary: resource.summary,
     type,
     version: resource.version,
   };
