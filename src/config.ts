@@ -1,3 +1,5 @@
+import { DEFAULT_SCHEMA_EXTENSIONS } from '@/src/utils/schema-detection';
+
 export interface ReviewPayload {
   baseSha?: string;
   catalogPath?: string;
@@ -10,6 +12,7 @@ export interface ReviewPayload {
   ignorePaths?: string[] | string;
   model?: string;
   prNumber?: number | string;
+  schemaExtensions?: string[] | string;
   workspace?: string;
 }
 
@@ -30,6 +33,8 @@ export interface ReviewConfig {
   headSha?: string;
   ignorePaths: string[];
   model: string;
+  /** Extensions (e.g. `.json`, `.js`) treated as message schemas by the breaking-changes agent. */
+  schemaExtensions: string[];
   thinkingLevel: string;
   workspace: string;
 }
@@ -56,7 +61,8 @@ export const DEFAULT_DIFF_IGNORE_PATHS = [
   'vendor',
 ];
 
-const parseIgnorePaths = (value: string[] | string | undefined): string[] => {
+/** Parse a comma-separated string (or pass through an array), trimming and dropping empties. */
+const parseCommaList = (value: string[] | string | undefined): string[] => {
   if (Array.isArray(value)) {
     return value.map((entry) => entry.trim()).filter(Boolean);
   }
@@ -83,7 +89,8 @@ const parseGithubTarget = (payload: ReviewPayload, env: NodeJS.ProcessEnv): Gith
 
 export const resolveConfig = (payload: ReviewPayload | undefined, env: NodeJS.ProcessEnv): ReviewConfig => {
   const p = payload ?? {};
-  const ignorePaths = parseIgnorePaths(p.ignorePaths ?? env.EVENTCATALOG_IGNORE_PATHS);
+  const ignorePaths = parseCommaList(p.ignorePaths ?? env.EVENTCATALOG_IGNORE_PATHS);
+  const schemaExtensions = parseCommaList(p.schemaExtensions ?? env.EVENTCATALOG_SCHEMA_EXTENSIONS);
 
   return {
     baseSha: p.baseSha || env.EVENTCATALOG_BASE_SHA,
@@ -95,6 +102,7 @@ export const resolveConfig = (payload: ReviewPayload | undefined, env: NodeJS.Pr
     headSha: p.headSha || env.EVENTCATALOG_HEAD_SHA,
     ignorePaths: ignorePaths.length > 0 ? ignorePaths : DEFAULT_DIFF_IGNORE_PATHS,
     model: p.model || env.EVENTCATALOG_MODEL || env.MODEL || 'anthropic/claude-sonnet-4-6',
+    schemaExtensions: schemaExtensions.length > 0 ? schemaExtensions : DEFAULT_SCHEMA_EXTENSIONS,
     thinkingLevel: env.THINKING_LEVEL || 'medium',
     workspace: p.workspace || env.GITHUB_WORKSPACE || env.WORKSPACE || process.cwd(),
   };

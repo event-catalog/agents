@@ -24,6 +24,10 @@ inputs:
     description: 'Which agent to run on each pull request. Available: code-to-docs, breaking-changes.'
     required: false
     default: code-to-docs
+  schema-extensions:
+    description: Comma-separated file extensions the breaking-changes agent treats as message schemas. Add others (e.g. .js) to match where your contracts live.
+    required: false
+    default: .json,.yml,.yaml,.avro,.avsc,.proto,.graphql,.gql
 
 runs:
   using: composite
@@ -65,8 +69,9 @@ runs:
         EVENTCATALOG_IGNORE_PATHS: ${{ inputs.ignore-paths }}
         EVENTCATALOG_PR_NUMBER: ${{ github.event.pull_request.number }}
         EVENTCATALOG_AGENT: ${{ inputs.agent }}
+        EVENTCATALOG_SCHEMA_EXTENSIONS: ${{ inputs.schema-extensions }}
       run: |
-        payload="$(node --input-type=module -e 'console.log(JSON.stringify({ baseSha: process.env.EVENTCATALOG_BASE_SHA || undefined, catalogPath: process.env.EVENTCATALOG_CATALOG_PATH, catalogRepo: process.env.EVENTCATALOG_CATALOG_REPO, headSha: process.env.EVENTCATALOG_HEAD_SHA || undefined, ignorePaths: process.env.EVENTCATALOG_IGNORE_PATHS, model: process.env.EVENTCATALOG_MODEL, workspace: process.env.GITHUB_WORKSPACE }))')"
+        payload="$(node --input-type=module -e 'console.log(JSON.stringify({ baseSha: process.env.EVENTCATALOG_BASE_SHA || undefined, catalogPath: process.env.EVENTCATALOG_CATALOG_PATH, catalogRepo: process.env.EVENTCATALOG_CATALOG_REPO, headSha: process.env.EVENTCATALOG_HEAD_SHA || undefined, ignorePaths: process.env.EVENTCATALOG_IGNORE_PATHS, model: process.env.EVENTCATALOG_MODEL, schemaExtensions: process.env.EVENTCATALOG_SCHEMA_EXTENSIONS || undefined, workspace: process.env.GITHUB_WORKSPACE }))')"
 
         # Map the requested agent to its Flue workflow. To run more than one agent, add another
         # step (or workflow file) with a different `agent`.

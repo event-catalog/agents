@@ -166,17 +166,22 @@ second workflow file):
 
 ### Inputs
 
-| Input           | Required | Default                       | Description                                                                          |
-| --------------- | -------- | ----------------------------- | ------------------------------------------------------------------------------------ |
-| `agent`         | No       | `code-to-docs`                | Which agent to run: `code-to-docs` or `breaking-changes`.                            |
-| `catalog-repo`  | Yes      |                               | EventCatalog repository to read/document, in `owner/repo` format.                    |
-| `catalog-ref`   | No       | `main`                        | Branch checked out from the catalog repository and targeted by documentation PRs.    |
-| `catalog-token` | No       | `github.token`                | Token used to check out the catalog repository and open documentation pull requests. |
-| `model`         | No       | `anthropic/claude-sonnet-4-6` | Model specifier for the agent. See [available models](https://pi.dev/models).        |
-| `ignore-paths`  | No       | see [action.yml](action.yml)  | Comma-separated paths or glob patterns to ignore in PR diffs.                        |
+| Input               | Required | Default                       | Description                                                                                                                                       |
+| ------------------- | -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent`             | No       | `code-to-docs`                | Which agent to run: `code-to-docs` or `breaking-changes`.                                                                                         |
+| `catalog-repo`      | Yes      |                               | EventCatalog repository to read/document, in `owner/repo` format.                                                                                 |
+| `catalog-ref`       | No       | `main`                        | Branch checked out from the catalog repository and targeted by documentation PRs.                                                                 |
+| `catalog-token`     | No       | `github.token`                | Token used to check out the catalog repository and open documentation pull requests.                                                              |
+| `model`             | No       | `anthropic/claude-sonnet-4-6` | Model specifier for the agent. See [available models](https://pi.dev/models).                                                                     |
+| `ignore-paths`      | No       | see [action.yml](action.yml)  | Comma-separated paths or glob patterns to ignore in PR diffs.                                                                                     |
+| `schema-extensions` | No       | see [action.yml](action.yml)  | Comma-separated file extensions the Breaking Changes agent treats as message schemas. Add others (e.g. `.js`) to match where your contracts live. |
 
 The agents run on [Flue](https://flueframework.com), which supports models from many providers — see
 the full list of model specifiers at [pi.dev/models](https://pi.dev/models).
+
+> **Breaking Changes only looks at schema files.** By default that means `.json`, `.yml`, `.yaml`,
+> `.avro`, `.avsc`, `.proto`, `.graphql`, and `.gql`. If your message contracts live in source files
+> (for example a `messages.js`), add that extension via `schema-extensions` so the agent inspects it.
 
 ### Provider API keys
 

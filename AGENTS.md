@@ -113,14 +113,15 @@ operations.
 
 ## Action Contract
 
-| Input           | Default                       | Description                                                    |
-| --------------- | ----------------------------- | -------------------------------------------------------------- |
-| `agent`         | `code-to-docs`                | Which agent to run: `code-to-docs` or `breaking-changes`.      |
-| `catalog-repo`  | _(required)_                  | `owner/repo` catalog repository.                               |
-| `catalog-ref`   | `main`                        | Target catalog branch.                                         |
-| `catalog-token` | `github.token`                | Token used to check out, push to, and open PRs in the catalog. |
-| `model`         | `anthropic/claude-sonnet-4-6` | Model specifier ([available models](https://pi.dev/models)).   |
-| `ignore-paths`  | see `action.yml`              | Comma-separated paths/globs excluded from diff review.         |
+| Input               | Default                       | Description                                                    |
+| ------------------- | ----------------------------- | -------------------------------------------------------------- |
+| `agent`             | `code-to-docs`                | Which agent to run: `code-to-docs` or `breaking-changes`.      |
+| `catalog-repo`      | _(required)_                  | `owner/repo` catalog repository.                               |
+| `catalog-ref`       | `main`                        | Target catalog branch.                                         |
+| `catalog-token`     | `github.token`                | Token used to check out, push to, and open PRs in the catalog. |
+| `model`             | `anthropic/claude-sonnet-4-6` | Model specifier ([available models](https://pi.dev/models)).   |
+| `ignore-paths`      | see `action.yml`              | Comma-separated paths/globs excluded from diff review.         |
+| `schema-extensions` | see `action.yml`              | Comma-separated extensions Breaking Changes treats as schemas. |
 
 Provider keys are supplied through normal workflow env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `OPENROUTER_API_KEY`). Analytics can be disabled with `POSTHOG_KEY: ""`.

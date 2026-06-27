@@ -48,7 +48,7 @@ async function review({ init }: FlueContext<ReviewPayload>, config: ReviewConfig
 
   // 1. Narrow to schema-like files (json, yml, avro, proto, graphql, and similar). The agent only
   //    ever reasons about these; non-schema source changes are out of scope for this workflow.
-  const schemaFiles = getChangedSchemaFiles(changedFiles);
+  const schemaFiles = getChangedSchemaFiles(changedFiles, config.schemaExtensions);
 
   if (schemaFiles.length === 0) {
     console.error('[eventcatalog:flue] No schema changes detected in this pull request');

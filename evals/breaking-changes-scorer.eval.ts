@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import type { BreakingChangeResponse, SchemaConsumersResponse } from '@/src/review-output';
+import { getChangedSchemaFiles } from '@/src/utils/schema-detection';
 import { scoreBreakingChange, scoreConsumers } from './support/breaking-changes-scorers';
 import { orderConfirmedBreaking, orderConfirmedAdditive } from './fixtures/breaking-change-order-confirmed/scenario';
 
@@ -85,4 +86,19 @@ test('penalizes missing the consumer entirely', () => {
   const { score, failures } = scoreConsumers([], orderConfirmedBreaking.consumersExpectation);
   expect(score).toBeLessThan(1);
   expect(failures.some((f) => f.includes('NotificationsService'))).toBe(true);
+});
+
+const changed = (fileName: string) => ({ changedLines: [], diff: '', fileName });
+
+test('detects schema files by the default extensions and ignores source files', () => {
+  const files = [changed('events/OrderConfirmed/schema.json'), changed('contracts/messages.js'), changed('api/openapi.yml')];
+  const matched = getChangedSchemaFiles(files).map((f) => f.fileName);
+  expect(matched).toEqual(['events/OrderConfirmed/schema.json', 'api/openapi.yml']);
+});
+
+test('honors a custom schema-extensions list (e.g. adding .js)', () => {
+  const files = [changed('events/OrderConfirmed/schema.json'), changed('contracts/messages.js')];
+  // Only .js is requested here, so the .json schema is excluded and the .js contract is included.
+  const matched = getChangedSchemaFiles(files, ['.js']).map((f) => f.fileName);
+  expect(matched).toEqual(['contracts/messages.js']);
 });
