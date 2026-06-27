@@ -39,8 +39,12 @@ test('formats breaking-change diff snippets as top-level fenced code blocks', ()
       diagram: [
         '```mermaid',
         'flowchart LR',
-        '  OrdersService[OrdersService] --> OrderConfirmed[OrderConfirmed]',
-        '  OrderConfirmed --> InventoryService[InventoryService]',
+        '  OrdersService[OrdersService] -- sends --> OrderConfirmed[OrderConfirmed]',
+        '  OrderConfirmed -- received by --> InventoryService[InventoryService]',
+        '  classDef service fill:#fdf2f8,stroke:#ec4899,color:#831843;',
+        '  classDef event fill:#fff7ed,stroke:#f97316,color:#9a3412;',
+        '  class OrdersService,InventoryService service;',
+        '  class OrderConfirmed event;',
         '```',
       ].join('\n'),
     },
@@ -57,11 +61,13 @@ test('formats breaking-change diff snippets as top-level fenced code blocks', ()
   expect(comment).toContain('+ "required": ["orderId"]\n```\n````');
   expect(comment).toContain('#### Impact diagram');
   expect(comment).toContain('```mermaid\nflowchart LR');
+  expect(comment).toContain('classDef service fill:#fdf2f8,stroke:#ec4899,color:#831843;');
   expect(comment).not.toContain('```mermaid\n```mermaid');
   expect(comment).toContain('#### Affected consumers');
-  expect(comment).toContain('| Name | Version | Summary | Owners | Why affected | Path |');
   expect(comment).toContain(
-    '| InventoryService | 0.0.2 | Keeps inventory in sync with confirmed orders. | inventory-team | Receives OrderConfirmed and depends on this payload. | /domains/Orders/services/InventoryService |'
+    '- InventoryService (0.0.2) - Keeps inventory in sync with confirmed orders.\n  - Reason: Receives OrderConfirmed and depends on this payload.\n  - Owners: inventory-team'
   );
+  expect(comment).not.toContain('| Name | Version | Summary | Owners | Why affected | Path |');
+  expect(comment).not.toContain('/domains/Orders/services/InventoryService');
   expect(comment).not.toMatch(/^  `{3,}/m);
 });

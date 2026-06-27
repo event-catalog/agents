@@ -5,7 +5,7 @@ import eventCatalogSkill from '../skills/eventcatalog-documentation/SKILL.md' wi
 import { createDumpCatalogTool } from '@/src/tools/dump-catalog';
 import { resolveCatalogPath } from '@/src/utils/eventcatalog-utils';
 
-const instructions = (sourcePath: string, catalogPath: string) => `
+export const buildBreakingChangesInstructions = (sourcePath: string, catalogPath: string) => `
 You are an expert software engineer who specialises in API and message contracts. Your task is to
 analyse schema changes in a pull request, decide whether they are breaking for existing consumers,
 and trace any breaking change to the resources in EventCatalog that depend on it.
@@ -49,6 +49,30 @@ NOT breaking.
   empty result is a valid outcome.
 - Be precise about why a change is or is not breaking, and quote the exact lines that introduce a
   breaking change so they can be highlighted for the author.
+
+// Mermaid diagrams
+When a structured response asks for a Mermaid diagram:
+- Return raw Mermaid flowchart syntax only. Do not wrap it in markdown fences.
+- Show the producer or owning resource, the changed contract, and the affected consumers.
+- Label edges with the relationship they represent, for example \`-- sends -->\`, \`-- contract -->\`,
+  or \`-- receives -->\`. Do not return unlabeled arrows unless the relationship is genuinely unknown.
+- Color-code nodes by EventCatalog resource type using Mermaid \`classDef\` and \`class\` statements.
+- Use this EventCatalog resource palette:
+  - service: pink (#ec4899)
+  - event: orange (#f97316)
+  - command: blue (#3b82f6)
+  - query: green (#22c55e)
+  - domain: yellow (#eab308)
+  - flow: teal (#14b8a6)
+  - channel/entity: purple (#a855f7)
+  - container: indigo (#6366f1)
+  - agent: sky (#0ea5e9)
+  - data-product: cyan (#06b6d4)
+  - team/user/unknown: gray (#6b7280)
+- Example style syntax:
+  \`classDef service fill:#fdf2f8,stroke:#ec4899,color:#831843;\`
+  \`classDef event fill:#fff7ed,stroke:#f97316,color:#9a3412;\`
+  \`class OrdersService service;\`
 `;
 
 /**
@@ -64,7 +88,7 @@ export default createAgent<ReviewPayload>(async ({ payload, env }) => {
     model: cfg.model,
     sandbox: local({ cwd: cfg.workspace }),
     cwd: cfg.workspace,
-    instructions: instructions(cfg.workspace, catalogPath),
+    instructions: buildBreakingChangesInstructions(cfg.workspace, catalogPath),
     skills: [eventCatalogSkill],
     tools: [createDumpCatalogTool(catalogPath)],
   };

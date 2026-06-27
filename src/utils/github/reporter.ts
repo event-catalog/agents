@@ -74,11 +74,6 @@ const formatInlineCode = (value: string): string => {
 
 const formatInlineText = (value: string): string => value.replace(/\s+/g, ' ').trim();
 
-const formatTableCell = (value: string): string => {
-  const content = formatInlineText(value);
-  return content ? content.replaceAll('|', '\\|') : '-';
-};
-
 const formatReviewComment = ({ catalogPath, catalogPullRequestUrl, changedFiles, result }: ReviewCommentInput): string => {
   const files = changedFiles.length > 0 ? changedFiles.map((file) => `- \`${file}\``).join('\n') : '- No files reviewed';
   const summary = truncate(formatResult(result), MAX_RESULT_CHARS);
@@ -158,6 +153,14 @@ export interface BreakingSchemaReport {
   diagram?: SchemaConsumersResponse['diagram'];
 }
 
+const formatAffectedConsumer = (consumer: SchemaConsumersResponse['consumers'][number]): string => {
+  const summary = formatInlineText(consumer.summary || consumer.type);
+  const owners = consumer.owners.length > 0 ? `\n  - Owners: ${consumer.owners.map(formatInlineText).join(', ')}` : '';
+
+  return `- ${formatInlineText(consumer.id)} (${formatInlineText(consumer.version)}) - ${summary}
+  - Reason: ${formatInlineText(consumer.reason)}${owners}`;
+};
+
 export const formatBreakingChangesComment = (reports: BreakingSchemaReport[]): string => {
   const sections = reports
     .map(({ breakingChange, consumers, diagram }) => {
@@ -171,21 +174,9 @@ export const formatBreakingChangesComment = (reports: BreakingSchemaReport[]): s
               .join('\n\n')
           : '- No specific lines were highlighted.';
 
-      const consumerRows =
+      const consumersList =
         consumers.length > 0
-          ? consumers
-              .map(
-                (consumer) =>
-                  `| ${formatTableCell(consumer.id)} | ${formatTableCell(consumer.version)} | ${formatTableCell(consumer.summary)} | ${formatTableCell(consumer.owners.join(', '))} | ${formatTableCell(consumer.reason)} | ${formatTableCell(consumer.path)} |`
-              )
-              .join('\n')
-          : '';
-
-      const consumersTable =
-        consumers.length > 0
-          ? `| Name | Version | Summary | Owners | Why affected | Path |
-| --- | --- | --- | --- | --- | --- |
-${consumerRows}`
+          ? consumers.map((consumer) => formatAffectedConsumer(consumer)).join('\n')
           : 'No consumers of this schema were found in the EventCatalog.';
 
       const flowDiagram = diagram?.trim() ? `#### Impact diagram\n\n${formatMermaidBlock(diagram)}\n\n` : '';
@@ -203,7 +194,7 @@ ${changes}
 ${flowDiagram}
 #### Affected consumers
 
-${consumersTable}`;
+${consumersList}`;
     })
     .join('\n\n');
 

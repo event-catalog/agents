@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import type { BreakingChangeResponse, SchemaConsumersResponse } from '@/src/review-output';
 import { buildDetectBreakingSchemaChangePrompt } from '@/src/prompts/detect-breaking-schema-changes';
 import { buildFindSchemaConsumersPrompt } from '@/src/prompts/find-schema-consumers';
+import { buildBreakingChangesInstructions } from '@/src/agents/breaking-changes';
 import { getChangedSchemaFiles } from '@/src/utils/schema-detection';
 import { scoreBreakingChange, scoreConsumers } from './support/breaking-changes-scorers';
 import { orderConfirmedBreaking, orderConfirmedAdditive } from './fixtures/breaking-change-order-confirmed/scenario';
@@ -115,9 +116,21 @@ test('instructs the detector to return raw diff lines without markdown wrappers'
   expect(prompt).toContain('Do not wrap them in markdown fences, bullets, headings, or prose.');
 });
 
-test('instructs the consumer tracer to return table metadata and raw Mermaid syntax', () => {
+test('instructs the consumer tracer to return consumer metadata and a Mermaid diagram', () => {
   const prompt = buildFindSchemaConsumersPrompt(breakingResult, '/tmp/catalog');
   expect(prompt).toContain('summary, owners, path relative to the catalog root');
-  expect(prompt).toContain('Return raw Mermaid flowchart syntax in `diagram`');
-  expect(prompt).toContain('Do not wrap it in markdown fences.');
+  expect(prompt).toContain('Return a useful Mermaid flowchart in `diagram`.');
+  expect(prompt).toContain('Follow the Mermaid diagram conventions from your agent instructions.');
+  expect(prompt).not.toContain('service: pink (#ec4899)');
+});
+
+test('keeps Mermaid color and edge-label rules in the breaking-changes agent instructions', () => {
+  const instructions = buildBreakingChangesInstructions('/tmp/source', '/tmp/catalog');
+  expect(instructions).toContain('When a structured response asks for a Mermaid diagram');
+  expect(instructions).toContain('Label edges with the relationship they represent');
+  expect(instructions).toContain('-- receives -->');
+  expect(instructions).toContain('Color-code nodes by EventCatalog resource type');
+  expect(instructions).toContain('service: pink (#ec4899)');
+  expect(instructions).toContain('event: orange (#f97316)');
+  expect(instructions).toContain('classDef service fill:#fdf2f8,stroke:#ec4899,color:#831843;');
 });
