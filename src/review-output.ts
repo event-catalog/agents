@@ -87,8 +87,75 @@ export const promptResponse = v.object({
   ),
 });
 
+/**
+ * Structured result of scoring one changed schema for breaking changes. The breaking-changes
+ * workflow runs this once per changed schema file so it can decide which schemas are worth tracing
+ * to their downstream consumers.
+ */
+export const breakingChangeResponse = v.object({
+  fileName: v.pipe(v.string(), v.description('Path of the schema file that was scored, relative to the repository root.')),
+  isBreaking: v.pipe(
+    v.boolean(),
+    v.description(
+      'Whether this schema change is likely to break existing consumers (removed/renamed fields, type changes, new required fields, narrowed enums, and similar).'
+    )
+  ),
+  confidence: v.pipe(
+    v.picklist(['high', 'medium', 'low']),
+    v.description('Confidence that this change is breaking: high, medium, or low.')
+  ),
+  summary: v.pipe(
+    v.string(),
+    v.description('Concise explanation of why this change is or is not breaking, written for the pull request author.')
+  ),
+  breakingChanges: v.pipe(
+    v.array(
+      v.object({
+        change: v.pipe(v.string(), v.description('The specific breaking change, e.g. "Removed required field `customerId`".')),
+        lines: v.pipe(
+          v.string(),
+          v.description(
+            'The exact line or lines from the diff that introduce this breaking change, copied verbatim so they can be highlighted.'
+          )
+        ),
+      })
+    ),
+    v.description('The individual breaking changes found in this schema. Empty when isBreaking is false.')
+  ),
+});
+
+/**
+ * Structured result of tracing one breaking schema to its consumers in the EventCatalog. The agent
+ * first resolves which catalog resource the schema belongs to, then finds anything that receives or
+ * implements that message.
+ */
+export const schemaConsumersResponse = v.object({
+  resource: v.pipe(
+    v.string(),
+    v.description(
+      'The EventCatalog resource this schema belongs to, such as the message/service/domain id. Empty if it could not be resolved.'
+    )
+  ),
+  consumers: v.pipe(
+    v.array(
+      v.object({
+        id: v.pipe(v.string(), v.description('Id of the consuming catalog resource.')),
+        version: v.pipe(v.string(), v.description('Version of the consuming catalog resource.')),
+        type: v.pipe(v.string(), v.description('Type of the consuming resource: service, domain, message, flow, and similar.')),
+        path: v.pipe(v.string(), v.description('Path to the consuming resource relative to the EventCatalog root.')),
+        reason: v.pipe(v.string(), v.description('Why this resource is affected, e.g. "Receives the OrderPlaced event".')),
+      })
+    ),
+    v.description(
+      'Catalog resources that consume or implement this schema and may be affected by the breaking change. Empty when none are found.'
+    )
+  ),
+});
+
 export type ImpactPlanResponse = v.InferOutput<typeof impactPlanResponse>;
 export type PromptResponse = v.InferOutput<typeof promptResponse>;
+export type BreakingChangeResponse = v.InferOutput<typeof breakingChangeResponse>;
+export type SchemaConsumersResponse = v.InferOutput<typeof schemaConsumersResponse>;
 
 export const isPromptResponse = (result: unknown): result is PromptResponse => {
   if (!result || typeof result !== 'object') {

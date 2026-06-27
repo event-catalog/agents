@@ -41,11 +41,21 @@ function outcomeFromResult(result: PrReviewResult): PrReviewOutcome {
   return 'no_changes_required';
 }
 
+// The outcome of a single breaking-changes run. Like PrReviewOutcome, each value maps to one of the
+// exit points in the breaking-changes workflow.
+export type BreakingChangesOutcome =
+  | 'breaking_changes_reported'
+  | 'no_breaking_changes'
+  | 'no_schema_changes'
+  | 'no_changed_files'
+  | 'error';
+
 // posthog-node batches and sends in the background, so a short-lived CI process must flush before
 // it exits or events are lost. We create the client lazily and `shutdown()` it in the same call,
-// which is the simplest correct shape for a one-shot run. Analytics must never break a review, so
-// everything is wrapped and swallowed.
-async function capture(outcome: PrReviewOutcome, context: { model?: string; durationMs: number }) {
+// which is the simplest correct shape for a one-shot run. Analytics must never break a run, so
+// everything is wrapped and swallowed. The only properties we ever send are the high-level outcome,
+// the model, the run duration, and the repository — never anything about the contents of the repo.
+async function capture(event: string, outcome: string, context: { model?: string; durationMs: number }) {
   if (!ENABLED) return;
 
   const client = new PostHog(POSTHOG_KEY as string, { host: POSTHOG_HOST });
@@ -54,7 +64,7 @@ async function capture(outcome: PrReviewOutcome, context: { model?: string; dura
     client.capture({
       // CI runs have no user; group by repo so runs aggregate per project.
       distinctId: process.env.GITHUB_REPOSITORY || 'eventcatalog-action',
-      event: 'pr_review_completed',
+      event,
       properties: {
         outcome,
         model: context.model,
@@ -70,10 +80,21 @@ async function capture(outcome: PrReviewOutcome, context: { model?: string; dura
 
 // Record a completed PR-review run. Pass the workflow result and we work out the outcome from it.
 export function trackPrReviewCompleted(result: PrReviewResult, context: { model?: string; durationMs: number }) {
-  return capture(outcomeFromResult(result), context);
+  return capture('pr_review_completed', outcomeFromResult(result), context);
 }
 
 // Record a PR-review run that threw before producing a result.
 export function trackPrReviewError(context: { model?: string; durationMs: number }) {
-  return capture('error', context);
+  return capture('pr_review_completed', 'error', context);
+}
+
+// Record a completed breaking-changes run. The workflow labels its own outcome because, unlike
+// pr-review, its exit points are not distinguishable from the returned result shape alone.
+export function trackBreakingChangesCompleted(outcome: BreakingChangesOutcome, context: { model?: string; durationMs: number }) {
+  return capture('breaking_changes_completed', outcome, context);
+}
+
+// Record a breaking-changes run that threw before producing a result.
+export function trackBreakingChangesError(context: { model?: string; durationMs: number }) {
+  return capture('breaking_changes_completed', 'error', context);
 }

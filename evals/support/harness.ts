@@ -71,7 +71,7 @@ export type CatalogFileChange = {
   content?: string;
 };
 
-const MODEL = process.env.EVENTCATALOG_MODEL ?? process.env.MODEL ?? 'openai/gpt-4o-mini';
+export const MODEL = process.env.EVENTCATALOG_MODEL ?? process.env.MODEL ?? 'openai/gpt-4o-mini';
 
 /** Provider API-key env var by model-specifier prefix. Suites skip when the key is absent. */
 const PROVIDER_KEY_ENV: Record<string, string> = {

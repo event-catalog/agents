@@ -1,0 +1,19 @@
+---
+id: NotificationsService
+name: Notifications Service
+version: 1.0.0
+summary: Sends customer notifications when orders change.
+owners:
+  - notifications-team
+sends: []
+receives:
+  - id: OrderConfirmed
+    version: 1.0.0
+---
+
+The Notifications Service listens for OrderConfirmed and emails the customer a confirmation. It reads
+`orderId` and `orderStatus` from the OrderConfirmed payload.
+
+## Architecture
+
+<NodeGraph />
