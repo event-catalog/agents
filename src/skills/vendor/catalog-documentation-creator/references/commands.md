@@ -7,20 +7,24 @@
 
 ## Frontmatter Fields
 
-| Field        | Required | Description                                                         |
-| ------------ | -------- | ------------------------------------------------------------------- |
-| `id`         | Yes      | Unique identifier, typically PascalCase (e.g., `AddInventory`)      |
-| `name`       | Yes      | Human-readable name                                                 |
-| `version`    | Yes      | Semver string (e.g., `0.0.1`)                                       |
-| `summary`    | Yes      | 1-2 sentence description of what this command does                  |
-| `owners`     | Yes      | Array of team or user IDs                                           |
-| `schemaPath` | No       | Path to schema file (e.g., `schema.json`)                           |
-| `badges`     | No       | Array of badge objects                                              |
-| `operation`  | No       | Object with `method`, `path`, and `statusCodes` for REST operations |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Unique identifier, typically PascalCase (e.g., `AddInventory`) |
+| `name` | Yes | Human-readable name |
+| `version` | Yes | Semver string (e.g., `0.0.1`) |
+| `summary` | Yes | 1-2 sentence description of what this command does |
+| `owners` | Yes | Array of team or user IDs |
+| `schemaPath` | No | Path to schema file (e.g., `schema.json`) |
+| `schemas` | No | Array of schemas for multiple or named schemas: `path` (or `file`), `name`, `format`, `environments`, `default: true` for the one shown first. Use instead of `schemaPath` when there is more than one schema |
+| `badges` | No | Array of badge objects |
+| `operation` | No | Object with `method` (`GET`, `POST`, `PUT`, `DELETE`, or `PATCH`), `path`, and `statusCodes` for REST operations |
+| `draft` | No | `true`, or `{ title?, message }` |
+| `deprecated` | No | `true`, or `{ message, date }` to explain the deprecation |
+
 
 ## Example 1: Command with REST Operation
 
-````mdx
+```mdx
 ---
 id: AddInventory
 name: Add inventory
@@ -47,7 +51,7 @@ The AddInventory command is issued to add new stock to the inventory. This comma
 
 ## Architecture diagram
 
-<NodeGraph />
+<NodeGraph/>
 
 ## Payload example
 
@@ -59,7 +63,6 @@ The AddInventory command is issued to add new stock to the inventory. This comma
   "timestamp": "2024-07-04T14:48:00Z"
 }
 ```
-````
 
 ## Schema
 
@@ -68,7 +71,7 @@ The AddInventory command is issued to add new stock to the inventory. This comma
 
 ## Example 2: Simple Command
 
-````mdx
+```mdx
 ---
 id: CancelShipment
 name: Cancel Shipment
@@ -99,7 +102,6 @@ The CancelShipment command cancels a shipment that has not yet been dispatched. 
   "cancelledBy": "system"
 }
 ```
-````
 
 ## Schema
 
@@ -111,3 +113,4 @@ The CancelShipment command cancels a shipment that has not yet been dispatched. 
 - Commands represent requests for action (writes/mutations)
 - Use `operation` field for REST-style commands to document method, path, and status codes
 - Include `<NodeGraph />` to show which services handle this command
+- Example payloads can go in an `examples/` folder inside the message folder; they appear in a **Usage Examples** tab with no frontmatter changes

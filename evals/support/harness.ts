@@ -4,17 +4,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { createHarness } from 'vitest-evals';
-import { observe } from '@flue/runtime';
-import { createFlueContext, InMemorySessionStore, resolveModel } from '@flue/runtime/internal';
-import { local } from '@flue/runtime/node';
-import codeToDocsAgent from '@/src/agents/code-to-docs';
+import { CodeToDocs } from '@/src/agents/code-to-docs';
+import { initWithData } from '@/src/agents/structured-results';
 import type { ReviewPayload } from '@/src/config';
 import type { ImpactPlanResponse } from '@/src/review-output';
 import { applyDocumentationPlan } from '@/src/prompts/apply-documentation-plan-to-catalog';
 import { createDocumentationPlan } from '@/src/prompts/create-documentation-plan-from-code-changes';
 import type { ChangedFile } from '@/src/review-types';
 import { getUnauthorizedCatalogChanges } from '@/src/utils/impact-plan';
-import { getPackagedSkills } from './skill-registry';
+import { emptyUsage, ensureFlueRuntime, recordAgentActivity, type UsageTotals } from './flue-runtime';
+
+export type { UsageTotals };
 
 const exec = promisify(execFile);
 
@@ -43,17 +43,6 @@ export type AgentEvalOutput = {
   toolCalls: ToolCallRecord[];
   /** Aggregated token + cost usage across the whole run (all model operations). */
   usage: UsageTotals;
-};
-
-/** Summed token counts and estimated USD cost for a run, from Flue's per-operation usage. */
-export type UsageTotals = {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  totalTokens: number;
-  /** Estimated cost in USD, computed by Flue from provider pricing. */
-  costUsd: number;
 };
 
 export type ToolCallRecord = {
@@ -150,53 +139,17 @@ const runAgentScenario = async (input: AgentEvalInput): Promise<AgentEvalOutput>
 
   // Record every tool the agent invokes (Flue surfaces tool + skill calls as `tool` events), so we
   // can prove whether it actually consulted the skill / dump_catalog rather than working blind.
-  // Also sum token + cost usage from `operation` events (Flue computes cost from provider pricing).
+  // Also sum token + cost usage (Flue computes cost from provider pricing).
   const toolCalls: ToolCallRecord[] = [];
-  const usage: UsageTotals = {
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    totalTokens: 0,
-    costUsd: 0,
-  };
+  const usage = emptyUsage();
   let phase: 'plan' | 'apply' = 'plan';
-  const unobserve = observe((event) => {
-    if (event.type === 'tool' && 'toolName' in event && typeof event.toolName === 'string') {
-      toolCalls.push({ name: event.toolName, phase });
-      // Live trace so you can watch the agent work (and spot loops) instead of waiting for the test
-      // to finish. Opt in with EVAL_TRACE=1. console.error streams immediately; console.log buffers.
-      if (process.env.EVAL_TRACE) {
-        console.error(`  [${phase}] → ${event.toolName} (#${toolCalls.length})`);
-      }
-    }
-    if (event.type === 'operation' && 'usage' in event && event.usage) {
-      const u = event.usage;
-      usage.inputTokens += u.input;
-      usage.outputTokens += u.output;
-      usage.cacheReadTokens += u.cacheRead;
-      usage.cacheWriteTokens += u.cacheWrite;
-      usage.totalTokens += u.totalTokens;
-      usage.costUsd += u.cost.total;
-    }
-  });
+  await ensureFlueRuntime();
+  const unobserve = recordAgentActivity(() => phase, toolCalls, usage);
 
   try {
+    // A fresh agent conversation per scenario, seeded with the same payload shape the action sends.
     const payload: ReviewPayload = { workspace, catalogPath, model: MODEL };
-    // The agent supplies its own `sandbox: local({ cwd })`, which `init` uses. `createDefaultEnv`
-    // is the context fallback; delegate to the same local sandbox so both agree on the workspace.
-    const sandbox = local({ cwd: workspace });
-    const ctx = createFlueContext({
-      id: `eval-${input.fixture}`,
-      payload,
-      env: process.env as Record<string, string>,
-      agentConfig: { resolveModel, packagedSkills: getPackagedSkills() },
-      createDefaultEnv: () => sandbox.createSessionEnv({ id: `eval-${input.fixture}` }),
-      defaultStore: new InMemorySessionStore(),
-    });
-
-    const harness = await ctx.init(codeToDocsAgent, {});
-    const session = await harness.session();
+    const agent = initWithData(CodeToDocs, payload);
 
     // The shared review logic operates on the same `changedFiles` shape the workflow builds, so the
     // prompts here are byte-for-byte identical to production. See `src/prompts/`.
@@ -205,7 +158,7 @@ const runAgentScenario = async (input: AgentEvalInput): Promise<AgentEvalOutput>
     // Ask the agent which docs need to change. The planning step is read-only (enforced by the
     // prompt), and we no longer discard between phases — mirroring production — so any work survives
     // into the applied result rather than being wiped and silently no-op'd by an eager model.
-    const { impactPlan, shouldApply } = await createDocumentationPlan(session, changedFiles, catalogPath);
+    const { impactPlan, shouldApply } = await createDocumentationPlan(agent, changedFiles, catalogPath);
 
     // Diagnostic: flag if the agent ignored "read-only" and wrote during planning anyway.
     const planPhaseWrites = await collectCatalogChanges(workspace, catalogPath);
@@ -228,7 +181,7 @@ const runAgentScenario = async (input: AgentEvalInput): Promise<AgentEvalOutput>
 
     // Apply the approved catalog edits.
     phase = 'apply';
-    const applyResult = await applyDocumentationPlan(session, impactPlan, changedFiles, catalogPath);
+    const applyResult = await applyDocumentationPlan(agent, impactPlan, changedFiles, catalogPath);
     const catalogChanges = await collectCatalogChanges(workspace, catalogPath);
     const unauthorizedChanges = getUnauthorizedCatalogChanges(
       catalogChanges.map((c) => c.path),

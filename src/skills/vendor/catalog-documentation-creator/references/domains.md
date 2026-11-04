@@ -5,32 +5,34 @@
 **File:** `index.mdx` inside a domain folder
 **Location:** `domains/{DomainName}/index.mdx`
 
-Domains can contain subdomains, services, agents, flows, and other resources nested inside them.
+Domains can contain subdomains, systems, services, agents, flows, and other resources nested inside them.
 
 ## Frontmatter Fields
 
-| Field           | Required | Description                                       |
-| --------------- | -------- | ------------------------------------------------- |
-| `id`            | Yes      | Unique identifier (e.g., `E-Commerce`, `Payment`) |
-| `name`          | Yes      | Human-readable name                               |
-| `version`       | Yes      | Semver string (e.g., `0.0.1`)                     |
-| `summary`       | Yes      | Description of the domain's purpose and scope     |
-| `owners`        | Yes      | Array of team or user IDs                         |
-| `domains`       | No       | Array of subdomain references (`id`)              |
-| `services`      | No       | Array of service references                       |
-| `agents`        | No       | Array of agent references                         |
-| `data-products` | No       | Array of data product references                  |
-| `entities`      | No       | Array of entity references                        |
-| `flows`         | No       | Array of flow references                          |
-| `diagrams`      | No       | Array of diagram references                       |
-| `badges`        | No       | Array of badge objects                            |
-| `repository`    | No       | Object with `language` and `url`                  |
-| `sends`         | No       | Messages sent at the domain level                 |
-| `receives`      | No       | Messages received at the domain level             |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Unique identifier (e.g., `E-Commerce`, `Payment`) |
+| `name` | Yes | Human-readable name |
+| `version` | Yes | Semver string (e.g., `0.0.1`) |
+| `summary` | Yes | Description of the domain's purpose and scope |
+| `owners` | Yes | Array of team or user IDs |
+| `domains` | No | Array of subdomain references (`id`) |
+| `systems` | No | Array of system references |
+| `services` | No | Array of service references |
+| `agents` | No | Array of agent references |
+| `data-products` | No | Array of data product references |
+| `entities` | No | Array of entity references |
+| `flows` | No | Array of flow references |
+| `diagrams` | No | Array of diagram references |
+| `badges` | No | Array of badge objects |
+| `repository` | No | Object with `language` and `url` |
+| `sends` | No | Messages sent at the domain level |
+| `receives` | No | Messages received at the domain level |
+| `specifications` | No | Array of spec objects with `type` (`openapi`, `asyncapi`, `graphql`, or `generic`), `path`, and optional `name` |
 
 ## Nested Folder Structure
 
-Domains support deep nesting:
+Domains contain subdomains, systems, services, and agents. Subdomains are one level deep: `domains/{Domain}/subdomains/{Subdomain}/` is loaded, but a subdomain inside a subdomain is not.
 
 ```
 domains/E-Commerce/
@@ -38,6 +40,11 @@ domains/E-Commerce/
   subdomains/
     Orders/
       index.mdx                      # Subdomain definition
+      systems/
+        CheckoutSystem/
+          index.mdx
+          services/
+            CheckoutAPI/index.mdx
       services/
         OrdersService/
           index.mdx
@@ -71,6 +78,8 @@ domains:
   - id: Orders
   - id: Payment
   - id: Subscriptions
+systems:
+  - id: checkout-system
 agents:
   - id: OrderSupportAgent
   - id: FraudReviewAgent
@@ -105,12 +114,11 @@ receives:
 
 ## Domain Overview
 
-The E-Commerce domain encapsulates all the core business logic for the FlowMart e-commerce platform. It is built on event-driven microservices architecture with key services like [[service|OrdersService]], [[service|InventoryService]], and [[service|PaymentService]], plus agents like [[agent|OrderSupportAgent]].
+The E-Commerce domain encapsulates all the core business logic for the FlowMart e-commerce platform. It is built around systems like [[system|checkout-system]], key services like [[service|OrdersService]], [[service|InventoryService]], and [[service|PaymentService]], plus agents like [[agent|OrderSupportAgent]].
 
 <NodeGraph mode="full" search="false" legend="false" />
 
 FlowMart's E-Commerce domain enables:
-
 - Real-time inventory management via [[service|InventoryService]] across multiple warehouses
 - Seamless payment processing with [[service|PaymentService]] and [[service|PaymentGatewayService]]
 - Smart order routing and fulfillment through [[service|OrdersService]]
@@ -123,9 +131,9 @@ FlowMart's E-Commerce domain enables:
 
 ## Key Business Flows
 
-| Flow              | Description                                   |
-| ----------------- | --------------------------------------------- |
-| Order Processing  | Customer places order through fulfillment     |
+| Flow | Description |
+|------|-------------|
+| Order Processing | Customer places order through fulfillment |
 | Returns & Refunds | Customer initiates return and receives refund |
 
 ## Performance SLAs
@@ -133,14 +141,17 @@ FlowMart's E-Commerce domain enables:
 - Order Processing: < 2 seconds
 - Payment Processing: < 3 seconds
 - Inventory Updates: Real-time
+
 ```
 
 ## Key Conventions
 
 - Use `domains` field when a domain has subdomains
-- Use `services` and `agents` fields to list the services and agents that belong to this domain
+- Use `systems` to list systems that belong to this domain
+- Use `services` and `agents` fields to list direct domain services and agents that are not nested under a system
 - Use `entities`, `data-products`, `flows`, and `diagrams` when those resources belong to the domain
-- Use `[[service|ServiceName]]`, `[[agent|AgentName]]`, and `[[domain|DomainName]]` syntax to create links
+- Use `[[system|SystemName]]`, `[[service|ServiceName]]`, `[[agent|AgentName]]`, and `[[domain|DomainName]]` syntax to create links
 - Use `<NodeGraph mode="full" />` for a comprehensive domain visualization
+- Include `<ContextDiagram />` when a domain's systems define actors or relationships
 - Include sequence diagrams (`mermaid`) for complex flows
 - Domains can have their own `sends`/`receives` to show domain-level message flow

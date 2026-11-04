@@ -12,6 +12,7 @@
     "evals:json": "vitest run --config vitest.config.ts --reporter=json --outputFile=vitest-results.json",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "skills:sync": "bash scripts/sync-skill.sh",
     "test": "pnpm run build && pnpm run typecheck:evals && pnpm run evals"
   },
   "engines": {
@@ -19,10 +20,10 @@
   },
   "dependencies": {
     "@eventcatalog/sdk": "2.24.1",
-    "@flue/cli": "^1.0.0-beta.1",
-    "@flue/runtime": "^1.0.0-beta.1",
+    "@flue/runtime": "^2.3.0",
     "octokit": "^5.0.5",
     "posthog-node": "^4.18.0",
+    "tsx": "^4.23.15",
     "valibot": "^1.4.1"
   },
   "devDependencies": {

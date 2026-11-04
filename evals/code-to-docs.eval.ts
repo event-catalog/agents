@@ -1,8 +1,9 @@
-import { expect } from 'vitest';
+import { afterAll, expect } from 'vitest';
 import { describeEval } from 'vitest-evals';
 import { codeToDocsHarness, shouldSkipLiveModelEval } from './support/harness';
 import type { AgentEvalOutput } from './support/harness';
 import { reportRun } from './support/report';
+import { stopFlueRuntime } from './support/flue-runtime';
 import { scoreImpactPlan, type ImpactPlanExpectation } from './support/scorers';
 import { orderRefunded } from './fixtures/order-refunded/scenario';
 import { orderConfirmedSchemaChange } from './fixtures/order-confirmed-schema-change/scenario';
@@ -36,6 +37,8 @@ const expectNoUnauthorizedEdits = (output: AgentEvalOutput): void => {
 };
 
 const changedList = (output: AgentEvalOutput): string => output.catalogChanges.map((c) => `${c.status} ${c.path}`).join('\n');
+
+afterAll(stopFlueRuntime);
 
 describeEval(
   'code-to-docs agent: turning source-code PRs into EventCatalog documentation',

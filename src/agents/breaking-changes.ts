@@ -1,7 +1,10 @@
-import { createAgent } from '@flue/runtime';
+'use agent';
+import { useInitialData, useModel, useSandbox, useSkill, useTool } from '@flue/runtime';
 import { local } from '@flue/runtime/node';
 import { type ReviewPayload, resolveConfig } from '@/src/config';
-import eventCatalogSkill from '../skills/eventcatalog-documentation/SKILL.md' with { type: 'skill' };
+import { breakingChangeResult, schemaConsumersResult } from '@/src/review-output';
+import { eventCatalogSkill } from '@/src/skills/load-skill';
+import { useStructuredResults } from '@/src/agents/structured-results';
 import { createDumpCatalogTool } from '@/src/tools/dump-catalog';
 import { resolveCatalogPath } from '@/src/utils/eventcatalog-utils';
 
@@ -81,17 +84,19 @@ When a structured response asks for a Mermaid diagram:
  * The breaking-changes EventCatalog Agent. This agent inspects changed message schemas, decides
  * whether a change is breaking for existing consumers, and traces breaking changes to the catalog
  * resources that depend on them. It is read-only and never edits the catalog.
+ *
+ * The workflow passes its `ReviewPayload` as the instance's initial data.
  */
-export default createAgent<ReviewPayload>(async ({ payload, env }) => {
-  const cfg = resolveConfig(payload, env as NodeJS.ProcessEnv);
+export function BreakingChanges() {
+  const cfg = resolveConfig(useInitialData<ReviewPayload | undefined>(), process.env);
   const catalogPath = resolveCatalogPath(cfg);
 
-  return {
-    model: cfg.model,
-    sandbox: local({ cwd: cfg.workspace }),
-    cwd: cfg.workspace,
-    instructions: buildBreakingChangesInstructions(cfg.workspace, catalogPath),
-    skills: [eventCatalogSkill],
-    tools: [createDumpCatalogTool(catalogPath)],
-  };
-});
+  useModel(cfg.model);
+  useSandbox(local({ cwd: cfg.workspace }));
+  useSkill(eventCatalogSkill);
+  useTool(createDumpCatalogTool(catalogPath));
+  useStructuredResults([breakingChangeResult, schemaConsumersResult]);
+
+  return buildBreakingChangesInstructions(cfg.workspace, catalogPath);
+}
+BreakingChanges.agentName = 'breaking-changes';

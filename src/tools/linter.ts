@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { defineTool } from '@flue/runtime';
-import * as v from 'valibot';
 import { getChangedCatalogFiles } from '@/src/utils/eventcatalog-utils';
 
 const execFileAsync = promisify(execFile);
@@ -39,8 +38,7 @@ export const createLinterTool = (catalogPath: string) =>
   defineTool({
     name: 'linter',
     description: 'Run the EventCatalog linter in the catalog directory and return stdout, stderr, and exit code',
-    parameters: v.object({}),
-    execute: async (_, signal?): Promise<string> => {
+    run: async ({ signal }) => {
       const command = 'npx @eventcatalog/linter';
 
       if (!catalogPath) {
@@ -63,7 +61,7 @@ export const createLinterTool = (catalogPath: string) =>
         };
 
         console.error('[eventcatalog:linter] Skipping linter because no catalog files have changed yet');
-        return JSON.stringify(result);
+        return { output: result };
       }
 
       console.error(`[eventcatalog:linter] Running "${command}" in ${catalogPath}`);
@@ -86,7 +84,7 @@ export const createLinterTool = (catalogPath: string) =>
         console.error(
           `[eventcatalog:linter] Completed successfully (${stdout.length} stdout chars, ${stderr.length} stderr chars)`
         );
-        return JSON.stringify(result);
+        return { output: result };
       } catch (error) {
         if (!isExecFileError(error)) {
           throw error;
@@ -106,7 +104,7 @@ export const createLinterTool = (catalogPath: string) =>
         console.error(
           `[eventcatalog:linter] Completed with exit code ${result.exitCode} (${result.stdout.length} stdout chars, ${result.stderr.length} stderr chars)`
         );
-        return JSON.stringify(result);
+        return { output: result };
       }
     },
   });

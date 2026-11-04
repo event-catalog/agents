@@ -1,14 +1,18 @@
-import { createAgent } from '@flue/runtime';
+'use agent';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { useInitialData, useModel, useSandbox, useSkill, useTool } from '@flue/runtime';
 import { local } from '@flue/runtime/node';
 import { type ReviewPayload, resolveConfig } from '@/src/config';
-import eventCatalogSkill from '../skills/eventcatalog-documentation/SKILL.md' with { type: 'skill' };
+import { applyResult, impactPlanResult } from '@/src/review-output';
+import { eventCatalogSkill } from '@/src/skills/load-skill';
+import { useStructuredResults } from '@/src/agents/structured-results';
 import { createDumpCatalogTool } from '@/src/tools/dump-catalog';
 import { createLinterTool } from '@/src/tools/linter';
 import { resolveCatalogPath } from '@/src/utils/eventcatalog-utils';
-// import { createReporter } from '@/src/utils/github/reporter'
-// import { type ReviewPayload, resolveReviewConfig } from '@/src/review/config'
-// import { buildInstructions } from '@/src/review/instructions'
-// import { createSuggestChangeTool } from '@/src/tools/suggest-change'
+
+/** PR-to-catalog rules. Part of the instructions (not the skill) so the planning step always has them. */
+const prReviewWorkflow = readFileSync(join(import.meta.dirname, 'code-to-docs-pr-review.md'), 'utf8');
 
 const instructions = (sourcePath: string, catalogPath: string) => `
 You are an expert software engineer and technical writer with extensive experience in generating documentation from code changes. 
@@ -39,7 +43,7 @@ This workflow has two phases:
 - Ensure that the documentation is clear, concise, and easy to understand.
 - Never write README.md files, only write valid EventCatalog files to the catalog
 - Always follow patterns already established in the existing documentation.
-- When writing schemas, prefer writing the schema file next to the resource, and reference it using the <SchemaViewer file="schema.json/> (For example) in the markdown. Dont add schema examples directly in markdown pages
+- When writing schemas, prefer writing the schema file next to the resource, and reference it using the <SchemaViewer file="schema.json" /> (For example) in the markdown. Dont add schema examples directly in markdown pages
 - Treat the source diff as the source of truth. Current file contents show context, but the diff tells you what changed in this pull request.
 - The file changes you get might not be directly mapped to documentation. Search for relevant pages and resources in EventCatalog that match the changed concepts.
 - Do not create or update catalog resources just because a constant, channel, or identifier appears in a changed file. Only do so when the diff introduced or changed that concept.
@@ -58,22 +62,25 @@ This workflow has two phases:
 // Finish
 When you have completed the documentation, provide a summary of the changes made and any additional context that may be helpful for the reader.
 
+${prReviewWorkflow}
 `;
 
 /**
  * The code to docs EventCatalog Agent. This agent is responsible for generating documentation from code changes in a pull request. It uses the EventCatalog model to generate documentation based on the code changes and the existing documentation in the repository.
+ *
+ * The workflow passes its `ReviewPayload` as the instance's initial data.
  */
-export default createAgent<ReviewPayload>(async ({ payload, env }) => {
-  const cfg = resolveConfig(payload, env as NodeJS.ProcessEnv);
+export function CodeToDocs() {
+  const cfg = resolveConfig(useInitialData<ReviewPayload | undefined>(), process.env);
   const catalogPath = resolveCatalogPath(cfg);
-  //   const reporter = createReporter(cfg)
 
-  return {
-    model: cfg.model,
-    sandbox: local({ cwd: cfg.workspace }),
-    cwd: cfg.workspace,
-    instructions: instructions(cfg.workspace, catalogPath),
-    skills: [eventCatalogSkill],
-    tools: [createDumpCatalogTool(catalogPath), createLinterTool(catalogPath)],
-  };
-});
+  useModel(cfg.model);
+  useSandbox(local({ cwd: cfg.workspace }));
+  useSkill(eventCatalogSkill);
+  useTool(createDumpCatalogTool(catalogPath));
+  useTool(createLinterTool(catalogPath));
+  useStructuredResults([impactPlanResult, applyResult]);
+
+  return instructions(cfg.workspace, catalogPath);
+}
+CodeToDocs.agentName = 'code-to-docs';

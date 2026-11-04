@@ -1,9 +1,5 @@
 # EventCatalog Agents
 
-> [!NOTE]
-> **Early access / beta.** EventCatalog Agents are free for anyone to evaluate today. In the future,
-> a license will be required to run EventCatalog Agents in production. See [License](#license).
-
 AI agents that help you manage and document your architecture with
 [EventCatalog](https://www.eventcatalog.dev).
 
@@ -220,9 +216,8 @@ pnpm test
 # Run only the evals (see evals/README.md)
 pnpm run evals
 
-# Run an agent locally against a checked-out workspace
-# (pr-review = Code-to-Docs, breaking-changes = Breaking Changes)
-pnpm exec flue run pr-review --root . --target node --payload '{"workspace":"/tmp/example"}'
+# Run an agent locally against a checked-out workspace (code-to-docs or breaking-changes)
+pnpm exec tsx src/run.ts code-to-docs --payload '{"workspace":"/tmp/example"}'
 ```
 
 See [`AGENTS.md`](AGENTS.md) for the project layout and contributor guidelines, and

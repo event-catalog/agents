@@ -4,17 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { createHarness } from 'vitest-evals';
-import { observe } from '@flue/runtime';
-import { createFlueContext, InMemorySessionStore, resolveModel } from '@flue/runtime/internal';
-import { local } from '@flue/runtime/node';
-import breakingChangesAgent from '@/src/agents/breaking-changes';
+import { BreakingChanges } from '@/src/agents/breaking-changes';
+import { initWithData } from '@/src/agents/structured-results';
 import type { ReviewPayload } from '@/src/config';
 import type { BreakingChangeResponse, SchemaConsumersResponse } from '@/src/review-output';
 import { detectBreakingSchemaChange } from '@/src/prompts/detect-breaking-schema-changes';
 import { findSchemaConsumers } from '@/src/prompts/find-schema-consumers';
 import type { ChangedFile } from '@/src/review-types';
-import { MODEL, type UsageTotals } from './harness';
-import { getPackagedSkills } from './skill-registry';
+import { emptyUsage, ensureFlueRuntime, recordAgentActivity, type UsageTotals } from './flue-runtime';
+import { MODEL } from './harness';
 
 const exec = promisify(execFile);
 const git = (cwd: string, args: string[]) => exec('git', args, { cwd, maxBuffer: 1024 * 1024 * 20 });
@@ -63,50 +61,18 @@ const runScenario = async (input: BreakingChangesEvalInput): Promise<BreakingCha
   const workspace = await setupWorkspace(input.fixture);
 
   const toolCalls: BreakingChangesEvalOutput['toolCalls'] = [];
-  const usage: UsageTotals = {
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    totalTokens: 0,
-    costUsd: 0,
-  };
+  const usage = emptyUsage();
   let phase: 'detect' | 'consumers' = 'detect';
-  const unobserve = observe((event) => {
-    if (event.type === 'tool' && 'toolName' in event && typeof event.toolName === 'string') {
-      toolCalls.push({ name: event.toolName, phase });
-      if (process.env.EVAL_TRACE) {
-        console.error(`  [${phase}] → ${event.toolName} (#${toolCalls.length})`);
-      }
-    }
-    if (event.type === 'operation' && 'usage' in event && event.usage) {
-      const u = event.usage;
-      usage.inputTokens += u.input;
-      usage.outputTokens += u.output;
-      usage.cacheReadTokens += u.cacheRead;
-      usage.cacheWriteTokens += u.cacheWrite;
-      usage.totalTokens += u.totalTokens;
-      usage.costUsd += u.cost.total;
-    }
-  });
+  await ensureFlueRuntime();
+  const unobserve = recordAgentActivity(() => phase, toolCalls, usage);
 
   try {
+    // A fresh agent conversation per scenario, seeded with the same payload shape the action sends.
     const payload: ReviewPayload = { workspace, catalogPath, model: MODEL };
-    const sandbox = local({ cwd: workspace });
-    const ctx = createFlueContext({
-      id: `bc-eval-${input.fixture}`,
-      payload,
-      env: process.env as Record<string, string>,
-      agentConfig: { resolveModel, packagedSkills: getPackagedSkills() },
-      createDefaultEnv: () => sandbox.createSessionEnv({ id: `bc-eval-${input.fixture}` }),
-      defaultStore: new InMemorySessionStore(),
-    });
-
-    const harness = await ctx.init(breakingChangesAgent, {});
-    const session = await harness.session();
+    const agent = initWithData(BreakingChanges, payload);
 
     // 1. Score the schema for breaking changes (the real production prompt).
-    const breakingChange = await detectBreakingSchemaChange(session, input.schemaFile);
+    const breakingChange = await detectBreakingSchemaChange(agent, input.schemaFile);
 
     if (input.detectOnly) {
       return { breakingChange, consumers: [], diagram: '', toolCalls, usage };
@@ -114,7 +80,7 @@ const runScenario = async (input: BreakingChangesEvalInput): Promise<BreakingCha
 
     // 2. Trace the schema to its catalog consumers (the real production prompt).
     phase = 'consumers';
-    const { consumers, diagram } = await findSchemaConsumers(session, breakingChange, catalogPath);
+    const { consumers, diagram } = await findSchemaConsumers(agent, breakingChange, catalogPath);
 
     return { breakingChange, consumers, diagram, toolCalls, usage };
   } finally {

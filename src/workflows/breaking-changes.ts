@@ -1,5 +1,5 @@
-import type { FlueContext } from '@flue/runtime';
-import breakingChangesAgent from '@/src/agents/breaking-changes';
+import { BreakingChanges } from '@/src/agents/breaking-changes';
+import { initWithData } from '@/src/agents/structured-results';
 import { resolveConfig, type ReviewConfig, type ReviewPayload } from '@/src/config';
 import { postBreakingChangesSummary, type BreakingSchemaReport } from '@/src/utils/github/reporter';
 import { detectBreakingSchemaChange } from '@/src/prompts/detect-breaking-schema-changes';
@@ -15,12 +15,16 @@ type BreakingChangesResult = {
   reports: BreakingSchemaReport[];
 };
 
-export async function run(context: FlueContext<ReviewPayload>) {
+/**
+ * The Breaking Changes workflow. Expects a running Flue runtime (`start()` in `src/run.ts`, or the
+ * eval harness) with the `BreakingChanges` agent registered.
+ */
+export async function run(payload: ReviewPayload | undefined, env: NodeJS.ProcessEnv = process.env) {
   const startedAt = Date.now();
-  const config = resolveConfig(context.payload, context.env as NodeJS.ProcessEnv);
+  const config = resolveConfig(payload, env);
 
   try {
-    const { outcome, reports } = await review(context, config);
+    const { outcome, reports } = await review(payload, config);
     await trackBreakingChangesCompleted(outcome, { model: config.model, durationMs: Date.now() - startedAt });
     return { outcome, reports };
   } catch (error) {
@@ -29,7 +33,7 @@ export async function run(context: FlueContext<ReviewPayload>) {
   }
 }
 
-async function review({ init }: FlueContext<ReviewPayload>, config: ReviewConfig): Promise<BreakingChangesResult> {
+async function review(payload: ReviewPayload | undefined, config: ReviewConfig): Promise<BreakingChangesResult> {
   console.error('[eventcatalog:flue] Breaking Changes Agent workflow started');
 
   // Get the changed files in the pull request.
@@ -57,15 +61,14 @@ async function review({ init }: FlueContext<ReviewPayload>, config: ReviewConfig
 
   console.error(`[eventcatalog:flue] Found ${schemaFiles.length} changed schema file(s); scoring for breaking changes`);
 
-  const harness = await init(breakingChangesAgent, {});
-  const session = await harness.session();
+  const agent = initWithData(BreakingChanges, payload);
   const catalogPath = resolveCatalogPath(config);
 
   // 2. Score each changed schema for breaking changes (read-only). Anything that is not breaking is
   //    dropped here so we never go looking for consumers of an additive change.
   const breakingChanges = [];
   for (const schemaFile of schemaFiles) {
-    const breakingChange = await detectBreakingSchemaChange(session, schemaFile);
+    const breakingChange = await detectBreakingSchemaChange(agent, schemaFile);
     console.error(
       `[eventcatalog:flue] ${schemaFile.fileName}: ${breakingChange.isBreaking ? `breaking (${breakingChange.confidence} confidence)` : 'not breaking'}`
     );
@@ -83,7 +86,7 @@ async function review({ init }: FlueContext<ReviewPayload>, config: ReviewConfig
   // 3. For each breaking change, trace the schema to the catalog resources that consume it (read-only).
   const reports: BreakingSchemaReport[] = [];
   for (const breakingChange of breakingChanges) {
-    const { consumers, diagram } = await findSchemaConsumers(session, breakingChange, catalogPath, config.catalogUrl);
+    const { consumers, diagram } = await findSchemaConsumers(agent, breakingChange, catalogPath, config.catalogUrl);
     console.error(`[eventcatalog:flue] ${breakingChange.fileName}: found ${consumers.length} affected consumer(s)`);
     reports.push({ breakingChange, consumers, diagram });
   }

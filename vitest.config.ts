@@ -3,7 +3,6 @@ import { resolve } from 'node:path';
 import { loadEnvFile } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
-import { flueSkillPlugin } from './evals/support/skill-vite-plugin';
 
 const loadDotEnvFiles = (mode: string): void => {
   for (const file of [`.env.${mode}.local`, `.env.${mode}`, '.env.local', '.env']) {
@@ -18,7 +17,6 @@ export default defineConfig(({ mode }) => {
   loadDotEnvFiles(mode);
 
   return {
-    plugins: [flueSkillPlugin()],
     resolve: {
       alias: {
         // Mirrors tsconfig `paths`: `@/...` resolves from the project root, so `@/src/x` -> ./src/x.

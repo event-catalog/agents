@@ -1,5 +1,5 @@
-import type { FlueContext } from '@flue/runtime';
-import codeToDocsAgent from '@/src/agents/code-to-docs';
+import { CodeToDocs } from '@/src/agents/code-to-docs';
+import { initWithData } from '@/src/agents/structured-results';
 import { resolveConfig, type ReviewPayload } from '@/src/config';
 import { createOrUpdateCatalogPullRequest, preflightCatalogPullRequestAccess } from '@/src/utils/github/catalog-pr';
 import { postPullRequestSummary } from '@/src/utils/github/reporter';
@@ -15,12 +15,16 @@ import { getChangedFiles } from '@/src/utils/diff';
 import { getUnauthorizedCatalogChanges } from '@/src/utils/impact-plan';
 import { trackPrReviewCompleted, trackPrReviewError } from '@/src/utils/analytics';
 
-export async function run(context: FlueContext<ReviewPayload>) {
+/**
+ * The Code-to-Docs workflow. Expects a running Flue runtime (`start()` in `src/run.ts`, or the eval
+ * harness) with the `CodeToDocs` agent registered.
+ */
+export async function run(payload: ReviewPayload | undefined, env: NodeJS.ProcessEnv = process.env) {
   const startedAt = Date.now();
-  const config = resolveConfig(context.payload, context.env as NodeJS.ProcessEnv);
+  const config = resolveConfig(payload, env);
 
   try {
-    const result = await review(context, config);
+    const result = await review(payload, config);
     await trackPrReviewCompleted(result, { model: config.model, durationMs: Date.now() - startedAt });
     return result;
   } catch (error) {
@@ -29,7 +33,7 @@ export async function run(context: FlueContext<ReviewPayload>) {
   }
 }
 
-async function review({ init, payload }: FlueContext<ReviewPayload>, config: ReturnType<typeof resolveConfig>) {
+async function review(payload: ReviewPayload | undefined, config: ReturnType<typeof resolveConfig>) {
   console.error('[eventcatalog:flue] PR review workflow started');
 
   // First we check if the catalog exists and can be found.
@@ -53,8 +57,7 @@ async function review({ init, payload }: FlueContext<ReviewPayload>, config: Ret
     return result;
   }
 
-  const harness = await init(codeToDocsAgent, {});
-  const session = await harness.session();
+  const agent = initWithData(CodeToDocs, payload);
 
   // Get the changed files in the pull request
   const { files } = await getChangedFiles(config);
@@ -76,7 +79,7 @@ async function review({ init, payload }: FlueContext<ReviewPayload>, config: Ret
   // First we create the documentation plan, analyse the diff and figure out what needs to change/create.
   // The planning step is read-only (see the prompt); we no longer discard between phases, so any work
   // the agent does survives into the applied result instead of being wiped and silently no-op'd.
-  const { impactPlan, shouldApply } = await createDocumentationPlan(session, changedFiles, config.catalogPath);
+  const { impactPlan, shouldApply } = await createDocumentationPlan(agent, changedFiles, config.catalogPath);
 
   console.error(
     `[eventcatalog:flue] Impact plan created: ${impactPlan.catalogChangesRequired ? 'catalog changes required' : 'no catalog changes required'}`
@@ -102,7 +105,7 @@ async function review({ init, payload }: FlueContext<ReviewPayload>, config: Ret
   }
 
   // Next, tell the agent to apply the documentation plan on EventCatalog project
-  const reviewResult = await applyDocumentationPlan(session, impactPlan, changedFiles, config.catalogPath);
+  const reviewResult = await applyDocumentationPlan(agent, impactPlan, changedFiles, config.catalogPath);
   const catalogChangedFiles = await getChangedCatalogFiles(catalogPath);
   const unauthorizedCatalogChanges = getUnauthorizedCatalogChanges(catalogChangedFiles, impactPlan, config.catalogPath);
 

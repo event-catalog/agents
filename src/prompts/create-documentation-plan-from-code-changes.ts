@@ -1,5 +1,6 @@
-import type { FlueSession } from '@flue/runtime';
-import { impactPlanResponse, SOURCE_CHANGE_TYPES, type ImpactPlanResponse } from '@/src/review-output';
+import type { AgentInstanceHandle } from '@flue/runtime';
+import { promptForResult } from '@/src/agents/structured-results';
+import { impactPlanResult, SOURCE_CHANGE_TYPES, type ImpactPlanResponse } from '@/src/review-output';
 import type { ChangedFile } from '@/src/review-types';
 
 /**
@@ -33,14 +34,11 @@ export type DocumentationPlanResult = {
 
 /** Prompts the agent for a structured documentation plan. Does not edit files. */
 export const createDocumentationPlan = async (
-  session: FlueSession,
+  agent: AgentInstanceHandle,
   changedFiles: ChangedFile[],
   catalogPath: string
 ): Promise<DocumentationPlanResult> => {
-  const planResponse = await session.prompt(buildDocumentationPlanPrompt(changedFiles, catalogPath), {
-    result: impactPlanResponse,
-  });
-  const impactPlan = planResponse.data;
+  const impactPlan = await promptForResult(agent, buildDocumentationPlanPrompt(changedFiles, catalogPath), impactPlanResult);
 
   return {
     impactPlan,
