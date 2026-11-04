@@ -32,6 +32,12 @@ export const impactPlanResponse = v.object({
     v.string(),
     v.description('Concise high-level summary of the source pull request intent, based on the diff.')
   ),
+  catalogImpactSummary: v.pipe(
+    v.string(),
+    v.description(
+      'One or two sentences for the pull request author on what this change means for the EventCatalog: what needs documenting, or why nothing does. Shown on the pull request, so do not restate the code change itself.'
+    )
+  ),
   sourceChanges: v.pipe(
     v.array(
       v.object({
@@ -77,7 +83,7 @@ export const promptResponse = v.object({
   prSummary: v.pipe(
     v.string(),
     v.description(
-      'Markdown summary for the EventCatalog pull request body. Explain what catalog documentation changed and why it changed.'
+      'Markdown summary for the EventCatalog pull request body: what catalog documentation changed and why, in short paragraphs or bullets. Do not start with a heading or title, do not list the changed files, and do not link the source pull request; the pull request body adds those. Mention any linter or fitness_check problems you could not fix.'
     )
   ),
   sourcePrSummary: v.pipe(
@@ -158,7 +164,12 @@ export const schemaConsumersResponse = v.object({
           v.description('Owner team/user ids for the consuming resource. Empty if none are documented.')
         ),
         path: v.pipe(v.string(), v.description('Path to the consuming resource relative to the EventCatalog root.')),
-        reason: v.pipe(v.string(), v.description('Why this resource is affected, e.g. "Receives the OrderPlaced event".')),
+        reason: v.pipe(
+          v.string(),
+          v.description(
+            'Why this resource is affected, citing only what the catalog says, e.g. "Receives the OrderPlaced event (1.0.0)". Do not guess how the consumer uses particular fields unless the catalog documents it.'
+          )
+        ),
       })
     ),
     v.description(
@@ -199,13 +210,3 @@ export type ImpactPlanResponse = v.InferOutput<typeof impactPlanResponse>;
 export type PromptResponse = v.InferOutput<typeof promptResponse>;
 export type BreakingChangeResponse = v.InferOutput<typeof breakingChangeResponse>;
 export type SchemaConsumersResponse = v.InferOutput<typeof schemaConsumersResponse>;
-
-export const isPromptResponse = (result: unknown): result is PromptResponse => {
-  if (!result || typeof result !== 'object') {
-    return false;
-  }
-
-  const value = result as Partial<Record<keyof PromptResponse, unknown>>;
-
-  return typeof value.prTitle === 'string' && typeof value.prSummary === 'string' && typeof value.sourcePrSummary === 'string';
-};

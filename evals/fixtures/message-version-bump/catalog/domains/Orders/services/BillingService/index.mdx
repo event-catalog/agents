@@ -1,0 +1,18 @@
+---
+id: BillingService
+name: Billing Service
+version: 1.0.0
+summary: Raises invoices for confirmed orders.
+owners:
+  - orders-team
+sends: []
+receives:
+  - id: OrderConfirmed
+    version: latest
+---
+
+The Billing Service raises an invoice for every confirmed order.
+
+## Architecture
+
+<NodeGraph />

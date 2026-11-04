@@ -11,7 +11,9 @@ import type { ImpactPlanResponse } from '@/src/review-output';
 import { applyDocumentationPlan } from '@/src/prompts/apply-documentation-plan-to-catalog';
 import { createDocumentationPlan } from '@/src/prompts/create-documentation-plan-from-code-changes';
 import type { ChangedFile } from '@/src/review-types';
+import { archivePreviousVersions, type ArchivedVersion } from '@/src/utils/archive-versions';
 import { getUnauthorizedCatalogChanges } from '@/src/utils/impact-plan';
+import { withVersionPinTargets } from '@/src/utils/version-pins';
 import { emptyUsage, ensureFlueRuntime, recordAgentActivity, type UsageTotals } from './flue-runtime';
 
 export type { UsageTotals };
@@ -32,13 +34,18 @@ export type AgentEvalInput = {
 
 /** Everything the scorers and judges need about one agent run. */
 export type AgentEvalOutput = {
+  /** The plan the model proposed. */
   impactPlan: ImpactPlanResponse;
+  /** The plan the apply step was given: the model's plan plus the version-pin targets the workflow adds. */
+  approvedPlan?: ImpactPlanResponse;
   /** Files the agent created/modified/deleted in the catalog during the apply phase. */
   catalogChanges: CatalogFileChange[];
   /** Structured apply-phase response (PR title/summary), when the apply phase ran. */
   applyResult?: { prTitle: string; prSummary: string; sourcePrSummary: string };
   /** Whether the agent touched catalog files outside the approved plan. */
   unauthorizedChanges: string[];
+  /** Previous versions the workflow archived under `versioned/` after the agent bumped a version. */
+  archivedVersions: ArchivedVersion[];
   /** Every tool the agent invoked, in order — proves whether it used the skill, dump_catalog, linter, etc. */
   toolCalls: ToolCallRecord[];
   /** Aggregated token + cost usage across the whole run (all model operations). */
@@ -172,25 +179,30 @@ const runAgentScenario = async (input: AgentEvalInput): Promise<AgentEvalOutput>
       // For plan-only evals we still reset so the planning step leaves no artifacts.
       await git(catalogAbsPath, ['restore', '--staged', '--worktree', '.']).catch(() => {});
       await git(catalogAbsPath, ['clean', '-fdq']).catch(() => {});
-      return { impactPlan, catalogChanges: planPhaseWrites, unauthorizedChanges: [], toolCalls, usage };
+      return { impactPlan, catalogChanges: planPhaseWrites, unauthorizedChanges: [], archivedVersions: [], toolCalls, usage };
     }
 
     if (!shouldApply) {
-      return { impactPlan, catalogChanges: [], unauthorizedChanges: [], toolCalls, usage };
+      return { impactPlan, catalogChanges: [], unauthorizedChanges: [], archivedVersions: [], toolCalls, usage };
     }
 
-    // Apply the approved catalog edits.
+    // As in the workflow: add the resources that pin a planned message's version to the plan, apply it,
+    // archive the previous version of anything re-versioned, then check for off-plan edits.
+    const approvedPlan = await withVersionPinTargets(impactPlan, catalogAbsPath, catalogPath);
     phase = 'apply';
-    const applyResult = await applyDocumentationPlan(agent, impactPlan, changedFiles, catalogPath);
+    const applyResult = await applyDocumentationPlan(agent, approvedPlan, changedFiles, catalogPath);
+    const archivedVersions = await archivePreviousVersions(catalogAbsPath);
     const catalogChanges = await collectCatalogChanges(workspace, catalogPath);
     const unauthorizedChanges = getUnauthorizedCatalogChanges(
       catalogChanges.map((c) => c.path),
-      impactPlan,
-      catalogPath
+      approvedPlan,
+      catalogPath,
+      archivedVersions
     );
 
     return {
       impactPlan,
+      approvedPlan,
       catalogChanges,
       applyResult: {
         prTitle: applyResult.prTitle,
@@ -198,6 +210,7 @@ const runAgentScenario = async (input: AgentEvalInput): Promise<AgentEvalOutput>
         sourcePrSummary: applyResult.sourcePrSummary,
       },
       unauthorizedChanges,
+      archivedVersions,
       toolCalls,
       usage,
     };

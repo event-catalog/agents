@@ -8,6 +8,7 @@ import { applyResult, impactPlanResult } from '@/src/review-output';
 import { eventCatalogSkill } from '@/src/skills/load-skill';
 import { useStructuredResults } from '@/src/agents/structured-results';
 import { createDumpCatalogTool } from '@/src/tools/dump-catalog';
+import { createFitnessCheckTool } from '@/src/tools/fitness-check';
 import { createLinterTool } from '@/src/tools/linter';
 import { resolveCatalogPath } from '@/src/utils/eventcatalog-utils';
 
@@ -35,6 +36,7 @@ This workflow has two phases:
   project's test runner, or linters via \`bash\` when it helps verify correctness.
 - Use \`dump_catalog\` to get an index of the entire event catalog in JSON format. This can help you find relevant pages and resources in EventCatalog that match the changes made in the code.
 - Use \`linter\` after you make catalog documentation changes. If it reports \`skipped: true\`, continue reviewing the source PR and do not fix unrelated catalog files. Try to fix linter errors that your changes caused, but you must not edit unrelated catalog resources just to make pre-existing lint errors pass. Do NOT loop on the linter: make at most TWO rounds of fixes for the same errors. If errors remain after that, stop, leave your best effort in place, and explain the remaining lint issues in your structured response. Warnings (not errors) are acceptable and never need fixing — do not keep editing to clear warnings.
+- Use \`fitness_check\` after the linter. It runs the catalog's own architecture rules (fitness functions) and reports only the problems your changes introduced. Fix new error-severity problems in the files you changed, with the same two-round limit as the linter; warnings are acceptable. If it reports \`skipped: true\`, the catalog has no fitness functions. Never create or edit fitness functions (\`fitness/\` folders, \`*.fitness.ts\` files).
 
 // Skills
 - Always use the eventcatalog-documentation skill to learn how to write eventcatalog documentation
@@ -50,7 +52,7 @@ This workflow has two phases:
 - If you notice an existing catalog inconsistency that was not introduced by this pull request, report it as out of scope and do not edit it.
 - When the diff adds a new event, command, query, service operation, or domain concept, first check whether that catalog resource exists. If it does not exist, propose that resource as a catalog target.
 - When the diff changes a service's published or consumed messages, update the service sends/receives only for the changed message relationships.
-- When updating exisiting pages, don't just replace everything, but instead update the relevant sections to reflect the changes made in the code.
+- When updating existing pages, don't just replace everything, but instead update the relevant sections to reflect the changes made in the code.
 - Do not edit catalog pages that are unrelated to the source pull request, even if a catalog-wide validation tool reports issues in them.
 - Use proper grammar, spelling, and punctuation.
 - Avoid using jargon or technical terms that may not be familiar to the target audience.
@@ -79,6 +81,7 @@ export function CodeToDocs() {
   useSkill(eventCatalogSkill);
   useTool(createDumpCatalogTool(catalogPath));
   useTool(createLinterTool(catalogPath));
+  useTool(createFitnessCheckTool(catalogPath));
   useStructuredResults([impactPlanResult, applyResult]);
 
   return instructions(cfg.workspace, catalogPath);

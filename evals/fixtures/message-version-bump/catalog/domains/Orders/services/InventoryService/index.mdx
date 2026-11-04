@@ -1,0 +1,18 @@
+---
+id: InventoryService
+name: Inventory Service
+version: 1.0.0
+summary: Reserves and releases stock for orders.
+owners:
+  - orders-team
+sends: []
+receives:
+  - id: OrderConfirmed
+    version: 1.0.0
+---
+
+The Inventory Service commits reserved stock when an order is confirmed.
+
+## Architecture
+
+<NodeGraph />

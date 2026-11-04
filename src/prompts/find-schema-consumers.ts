@@ -23,10 +23,10 @@ Use the \`dump_catalog\` tool to get an index of the EventCatalog (${catalogPath
 ${catalogUrl ? `\nThe hosted EventCatalog URL is ${catalogUrl}. Use this when reasoning about public catalog links, but still return structured resource ids, versions, owner ids, and paths exactly as requested below.\n` : ''}
 
 1. Resolve which catalog resource this schema belongs to. The schema file is usually attached to a message (event, command, or query), but may belong to a service or domain.
-2. If you can find the resource (e.g message/service/domain) the schema belong too, then you have the resource id and version in the markdown file.
-3. With the resource id and version of the owner of the schema, you can grep and understand who is consuming this resouce. For example a service is a consumer if it "recieves" (in the frontmatter property) this schema resource (e.g OrderPlaced Event)
-4. A resource (E.g service) that sends the message is the producer, not a consumer; focus on consumers that could break.
-5. Return each affected consumer with its id, version, type, summary, owners, path relative to the catalog root, and a short reason explaining why it is affected.
+2. Once you have found the resource the schema belongs to, read its id and version from its frontmatter.
+3. Find the resources that consume it. A service, agent, or domain is a consumer if its \`receives\` frontmatter lists the resource's id. A \`receives\` entry matches when its version is the resource's current version, \`latest\`, missing (which means latest), or a range that includes it (e.g. \`1.x\`, \`^1.0.0\`). An entry pinned to an older exact version is still on that version: include it, and say so in the reason.
+4. A resource (e.g. a service) that sends the message is the producer, not a consumer; focus on consumers that could break.
+5. Return each affected consumer with its id, version, type, summary, owners, path relative to the catalog root, and a short reason explaining why it is affected. Base the reason only on what the catalog documents (for example "Receives payment-succeeded 1.0.0"). Don't guess how the consumer uses particular fields; the catalog rarely says, and a wrong guess misleads the reader.
 6. Use the consumer summary and owners from the catalog front matter or the \`dump_catalog\` result. If a consumer has no summary, return an empty string. If it has no owners, return an empty owners array.
 7. Return a useful Mermaid flowchart in \`diagram\`. The first non-empty line must be \`flowchart LR\`. Follow the Mermaid diagram conventions from your agent instructions. Use only real resource ids you found in the catalog. Use an empty string if you cannot resolve enough resources for a useful diagram.
 

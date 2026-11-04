@@ -28,7 +28,7 @@ export async function run(payload: ReviewPayload | undefined, env: NodeJS.Proces
     await trackBreakingChangesCompleted(outcome, { model: config.model, durationMs: Date.now() - startedAt });
     return { outcome, reports };
   } catch (error) {
-    await trackBreakingChangesError({ model: config.model, durationMs: Date.now() - startedAt });
+    await trackBreakingChangesError(error, { model: config.model, durationMs: Date.now() - startedAt });
     throw error;
   }
 }
