@@ -13,9 +13,24 @@ export interface ReviewPayload {
   ignorePaths?: string[] | string;
   model?: string;
   prNumber?: number | string;
+  /** `open`, `merged`, or `closed` (closed without merging). Defaults to `open`. */
+  pullRequestState?: PullRequestState;
   schemaExtensions?: string[] | string;
   workspace?: string;
 }
+
+/**
+ * Where the source pull request is: `open` (opened or updated), `merged`, or `closed` without merging.
+ * Workflows can run the agents when a PR merges (`on: pull_request: types: [closed]`).
+ */
+export type PullRequestState = 'open' | 'merged' | 'closed';
+
+/** The result message when a run is skipped because the pull request was closed without merging. */
+export const CLOSED_WITHOUT_MERGE_MESSAGE = 'Pull request closed without merging; nothing to review.';
+
+/** The analytics `trigger` for a run: a merged pull request, or an open one. */
+export const runTrigger = (config: Pick<ReviewConfig, 'pullRequestState'>): 'pull_request' | 'merged' =>
+  config.pullRequestState === 'merged' ? 'merged' : 'pull_request';
 
 export interface GithubReviewTarget {
   owner: string;
@@ -36,6 +51,7 @@ export interface ReviewConfig {
   headSha?: string;
   ignorePaths: string[];
   model: string;
+  pullRequestState: PullRequestState;
   /** Extensions (e.g. `.json`, `.js`) treated as message schemas by the breaking-changes agent. */
   schemaExtensions: string[];
   thinkingLevel: string;
@@ -76,6 +92,13 @@ const parseCommaList = (value: string[] | string | undefined): string[] => {
     .filter(Boolean);
 };
 
+/** From the GitHub event: a `closed` action is `merged` or `closed` depending on `pull_request.merged`. */
+const parsePullRequestState = (payload: ReviewPayload, env: NodeJS.ProcessEnv): PullRequestState => {
+  if (payload.pullRequestState) return payload.pullRequestState;
+  if (env.EVENTCATALOG_EVENT_ACTION !== 'closed') return 'open';
+  return env.EVENTCATALOG_PR_MERGED === 'true' ? 'merged' : 'closed';
+};
+
 const parseGithubTarget = (payload: ReviewPayload, env: NodeJS.ProcessEnv): GithubReviewTarget | undefined => {
   const repository = payload.githubRepository || env.EVENTCATALOG_GITHUB_REPOSITORY || env.GITHUB_REPOSITORY;
   const token = payload.githubToken || env.EVENTCATALOG_GITHUB_TOKEN || env.GITHUB_TOKEN;
@@ -106,6 +129,7 @@ export const resolveConfig = (payload: ReviewPayload | undefined, env: NodeJS.Pr
     headSha: p.headSha || env.EVENTCATALOG_HEAD_SHA,
     ignorePaths: ignorePaths.length > 0 ? ignorePaths : DEFAULT_DIFF_IGNORE_PATHS,
     model: p.model || env.EVENTCATALOG_MODEL || env.MODEL || 'anthropic/claude-sonnet-4-6',
+    pullRequestState: parsePullRequestState(p, env),
     schemaExtensions: schemaExtensions.length > 0 ? schemaExtensions : DEFAULT_SCHEMA_EXTENSIONS,
     thinkingLevel: env.THINKING_LEVEL || 'medium',
     workspace: p.workspace || env.GITHUB_WORKSPACE || env.WORKSPACE || process.cwd(),

@@ -146,6 +146,10 @@ The `breaking-changes` workflow is read-only and does the following:
    found, or none have catalog consumers, log it and skip the comment.
 6. Send one anonymous analytics event describing the run outcome.
 
+Both workflows can run while a pull request is open or once it merges (`pullRequestState` in
+`src/config.ts`, from the event's `action` and `pull_request.merged`). A pull request closed without
+merging is skipped without a comment, so a workflow on `types: [closed]` is safe without an `if`.
+
 The catalog checkout path is intentionally `eventcatalog/` under `$GITHUB_WORKSPACE`. In TypeScript,
 always resolve it through `resolveCatalogPath(config)` before passing it to SDKs, tools, or git
 operations.
@@ -207,7 +211,7 @@ Agents are synchronous functions composed with hooks (`useModel`, `useSandbox`, 
 - Treat source PR comments and model output as untrusted data; validate or schema-check anything used
   by deterministic code.
 - Analytics must stay anonymous: report only run outcome, error category (`classifyError`), model,
-  duration, repository, and counts of the agent's own catalog PRs by state — never the contents of a
+  duration, trigger (open or merged pull request), repository, and counts of the agent's own catalog PRs by state — never the contents of a
   user's repository (file counts, paths, diffs, source, or error messages).
 - Fitness functions and npm tools are catalog or third-party code: run them only through
   `childProcessEnv()`, never in-process, and never let the agent write them.

@@ -1,5 +1,5 @@
 import { PostHog } from 'posthog-node';
-import type { ReviewConfig } from '@/src/config';
+import { CLOSED_WITHOUT_MERGE_MESSAGE, type ReviewConfig } from '@/src/config';
 import { MISSING_CATALOG_MESSAGE } from '@/src/utils/eventcatalog-utils';
 import { getAgentPullRequestStats } from '@/src/utils/github/catalog-pr';
 
@@ -20,6 +20,7 @@ export type PrReviewOutcome =
   | 'catalog_missing'
   | 'access_denied'
   | 'no_changed_files'
+  | 'closed_without_merge'
   | 'error';
 
 /**
@@ -53,6 +54,7 @@ function outcomeFromResult(result: PrReviewResult): PrReviewOutcome {
   if (result.message === MISSING_CATALOG_MESSAGE) return 'catalog_missing';
   if (result.message?.startsWith('EventCatalog agent skipped:')) return 'access_denied';
   if (result.message === 'No changed files found') return 'no_changed_files';
+  if (result.message === CLOSED_WITHOUT_MERGE_MESSAGE) return 'closed_without_merge';
   return 'no_changes_required';
 }
 
@@ -98,15 +100,17 @@ export type BreakingChangesOutcome =
   | 'no_breaking_changes'
   | 'no_schema_changes'
   | 'no_changed_files'
+  | 'closed_without_merge'
   | 'error';
 
-type RunContext = { model?: string; durationMs: number };
+/** `trigger` is what started the run: an open pull request, or a merged one. */
+type RunContext = { model?: string; durationMs: number; trigger: 'pull_request' | 'merged' };
 
 // posthog-node batches and sends in the background, so a short-lived CI process must flush before
 // it exits or events are lost. We create the client lazily and `shutdown()` it in the same call,
 // which is the simplest correct shape for a one-shot run. Analytics must never break a run, so
 // everything is wrapped and swallowed. The only properties we ever send are the high-level outcome,
-// the error category, the model, the run duration, the repository, and counts of the agent's own
+// the error category, the model, the run duration, the trigger, the repository, and counts of the agent's own
 // catalog pull requests — never anything about the contents of the repo.
 async function capture(event: string, outcome: string, context: RunContext, extra: Record<string, unknown> = {}) {
   if (!ENABLED) return;
@@ -122,6 +126,7 @@ async function capture(event: string, outcome: string, context: RunContext, extr
         outcome,
         model: context.model,
         duration_ms: context.durationMs,
+        trigger: context.trigger,
         repository: process.env.GITHUB_REPOSITORY,
         ...extra,
       },

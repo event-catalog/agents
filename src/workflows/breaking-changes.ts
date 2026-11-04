@@ -1,6 +1,6 @@
 import { BreakingChanges } from '@/src/agents/breaking-changes';
 import { initWithData } from '@/src/agents/structured-results';
-import { resolveConfig, type ReviewConfig, type ReviewPayload } from '@/src/config';
+import { CLOSED_WITHOUT_MERGE_MESSAGE, resolveConfig, runTrigger, type ReviewConfig, type ReviewPayload } from '@/src/config';
 import { postBreakingChangesSummary, type BreakingSchemaReport } from '@/src/utils/github/reporter';
 import { detectBreakingSchemaChange } from '@/src/prompts/detect-breaking-schema-changes';
 import { findSchemaConsumers } from '@/src/prompts/find-schema-consumers';
@@ -25,16 +25,30 @@ export async function run(payload: ReviewPayload | undefined, env: NodeJS.Proces
 
   try {
     const { outcome, reports } = await review(payload, config);
-    await trackBreakingChangesCompleted(outcome, { model: config.model, durationMs: Date.now() - startedAt });
+    await trackBreakingChangesCompleted(outcome, {
+      model: config.model,
+      durationMs: Date.now() - startedAt,
+      trigger: runTrigger(config),
+    });
     return { outcome, reports };
   } catch (error) {
-    await trackBreakingChangesError(error, { model: config.model, durationMs: Date.now() - startedAt });
+    await trackBreakingChangesError(error, {
+      model: config.model,
+      durationMs: Date.now() - startedAt,
+      trigger: runTrigger(config),
+    });
     throw error;
   }
 }
 
 async function review(payload: ReviewPayload | undefined, config: ReviewConfig): Promise<BreakingChangesResult> {
   console.error('[eventcatalog:flue] Breaking Changes Agent workflow started');
+
+  // Like Code-to-Docs: a PR closed without merging has nothing to report.
+  if (config.pullRequestState === 'closed') {
+    console.error(`[eventcatalog:flue] ${CLOSED_WITHOUT_MERGE_MESSAGE}`);
+    return { outcome: 'closed_without_merge', reports: [] };
+  }
 
   // Get the changed files in the pull request.
   const { files } = await getChangedFiles(config);

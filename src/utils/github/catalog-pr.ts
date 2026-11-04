@@ -96,21 +96,24 @@ const getCatalogBranchName = (config: ReviewConfig): string => {
 };
 
 export const formatCatalogPullRequestBody = (
-  config: Pick<ReviewConfig, 'github'>,
+  config: Pick<ReviewConfig, 'github' | 'pullRequestState'>,
   changes: ResourceChange[],
   input: CreateCatalogPullRequestInput
 ): string => {
   const sourcePullRequest = config.github
     ? `https://github.com/${config.github.owner}/${config.github.repo}/pull/${config.github.prNumber}`
     : undefined;
-  const origin = sourcePullRequest
-    ? `for [${formatPullRequestReference(sourcePullRequest)}](${sourcePullRequest})`
-    : 'for a source code change';
+  const link = sourcePullRequest ? `[${formatPullRequestReference(sourcePullRequest)}](${sourcePullRequest})` : undefined;
+  // Run on merge, the source PR is done; run on an open PR, each new push to it updates this one.
+  const origin =
+    config.pullRequestState === 'merged'
+      ? `after ${link ?? 'a source code change'} was merged. Review it like any other pull request before merging.`
+      : `for ${link ?? 'a source code change'}. Review it like any other pull request before merging; pushing a new commit to the source pull request updates it.`;
   const notes = listReviewNotes(input.impactPlan);
   const summary = nestHeadings(truncate(input.result.prSummary.trim(), MAX_BODY_RESULT_CHARS), 3);
 
   return `> [!NOTE]
-> Opened by [EventCatalog Agents](https://github.com/event-catalog/agents) ${origin}. Review it like any other pull request before merging; pushing a new commit to the source pull request updates it.
+> Opened by [EventCatalog Agents](https://github.com/event-catalog/agents) ${origin}
 
 ## Changes
 

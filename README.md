@@ -141,7 +141,8 @@ jobs:
 **3. Open a pull request.** The selected agent runs and reports back on your source PR.
 
 > `fetch-depth: 0` is required so the agent can diff the pull request against its base. See
-> [Inputs](#inputs) for all configuration options.
+> [Inputs](#inputs) for all configuration options, and [When to run](#when-to-run) to run Code-to-Docs only
+> once a pull request merges (recommended).
 
 ### Choosing an agent
 
@@ -167,6 +168,74 @@ second workflow file):
     catalog-url: https://catalog.example.com
     catalog-token: ${{ secrets.EVENTCATALOG_TOKEN }}
 ```
+
+### When to run
+
+Agents can run while a pull request is open, or once it is merged. We recommend running **Code-to-Docs
+when a pull request merges**, and **Breaking Changes while it is open**:
+
+| Agent            | Recommended trigger                     | Why                                                                                                                          |
+| ---------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Code-to-Docs     | When merged (`types: [closed]`)         | Documents what actually shipped, runs once per pull request, and never documents abandoned work.                             |
+| Breaking Changes | While open (`opened`, `synchronize`, …) | Its job is to warn before a breaking change merges. Run after merging, the warning comes too late to act on before it ships. |
+
+Running Code-to-Docs on open pull requests also works: the catalog pull request is ready for review
+alongside the code, and is updated on every push. It runs more often, though, and most updates to a
+pull request don't change the documentation.
+
+```yaml
+# .github/workflows/eventcatalog.yml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+jobs:
+  code-to-docs:
+    # Only once the pull request is merged.
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: event-catalog/agents@v2
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          agent: code-to-docs
+          catalog-repo: your-org/your-catalog
+          catalog-token: ${{ secrets.EVENTCATALOG_TOKEN }}
+
+  breaking-changes:
+    # While the pull request is open.
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: event-catalog/agents@v2
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          agent: breaking-changes
+          catalog-repo: your-org/your-catalog
+          catalog-token: ${{ secrets.EVENTCATALOG_TOKEN }}
+```
+
+Use `pull_request` with `types: [closed]` rather than `push` to your main branch: the agents need the
+pull request to diff against and to comment on. If a pull request is closed without merging, both
+agents skip it without commenting.
 
 ## Configuration
 
@@ -269,7 +338,8 @@ jobs:
 
 The action sends one anonymous event per run so we can see how the agents are used. It contains the
 run's outcome (and, for a failed run, the kind of error, such as an invalid model provider key), the
-model, the run's duration, the repository name, and for Code-to-Docs, how many of the agent's catalog
+model, the run's duration, whether it ran on an open or a merged pull request, the repository name,
+and for Code-to-Docs, how many of the agent's catalog
 pull requests are open, merged, or closed without merging. It never contains anything from your
 repositories: no code, file names, paths, diffs, or pull request content. Set `POSTHOG_KEY: ""` in
 the step's `env` to turn it off.
