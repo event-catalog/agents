@@ -1,9 +1,5 @@
 # EventCatalog Agents
 
-> [!NOTE]
-> **Early access / beta.** EventCatalog Agents are free for anyone to evaluate today. In the future,
-> a license will be required to run EventCatalog Agents in production. See [License](#license).
-
 AI agents that help you manage and document your architecture with
 [EventCatalog](https://www.eventcatalog.dev).
 
