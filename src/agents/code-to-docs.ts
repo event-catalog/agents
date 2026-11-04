@@ -43,7 +43,7 @@ This workflow has two phases:
 - Ensure that the documentation is clear, concise, and easy to understand.
 - Never write README.md files, only write valid EventCatalog files to the catalog
 - Always follow patterns already established in the existing documentation.
-- When writing schemas, prefer writing the schema file next to the resource, and reference it using the <SchemaViewer file="schema.json/> (For example) in the markdown. Dont add schema examples directly in markdown pages
+- When writing schemas, prefer writing the schema file next to the resource, and reference it using the <SchemaViewer file="schema.json" /> (For example) in the markdown. Dont add schema examples directly in markdown pages
 - Treat the source diff as the source of truth. Current file contents show context, but the diff tells you what changed in this pull request.
 - The file changes you get might not be directly mapped to documentation. Search for relevant pages and resources in EventCatalog that match the changed concepts.
 - Do not create or update catalog resources just because a constant, channel, or identifier appears in a changed file. Only do so when the diff introduced or changed that concept.
