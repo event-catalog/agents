@@ -11,6 +11,7 @@ import { serviceUsesDatabase } from './fixtures/service-uses-database/scenario';
 import { servicePublishesOverKafka } from './fixtures/service-publishes-over-kafka/scenario';
 import { newServiceWithOpenapi } from './fixtures/new-service-with-openapi/scenario';
 import { messageVersionBump } from './fixtures/message-version-bump/scenario';
+import { newServiceInSystem } from './fixtures/new-service-in-system/scenario';
 import { readFrontmatterVersion } from '@/src/utils/archive-versions';
 
 /**
@@ -227,6 +228,31 @@ describeEval(
 
       // The agent checked its work against the catalog's fitness functions.
       expect(output.toolCalls.map((call) => call.name)).toContain('fitness_check');
+    });
+
+    it('adds a new service to a domain organised into systems: nests it in the system and lists it there', async ({ run }) => {
+      const { output } = await run(newServiceInSystem.input);
+      reportRun(output);
+      const s = newServiceInSystem;
+
+      expectGoodPlan(output, s.planExpectation);
+      expectNoUnauthorizedEdits(output);
+
+      // Apply: the service doc was created inside the system.
+      const service = output.catalogChanges.find(
+        (c) => c.status === 'added' && c.path.startsWith(s.serviceFolder) && /refund/i.test(c.path) && c.path.endsWith('.mdx')
+      );
+      expect(
+        service,
+        `Expected a RefundWorker service inside the system. Catalog changes were:\n${changedList(output)}`
+      ).toBeDefined();
+
+      // Apply: the system lists the new service.
+      const system = output.catalogChanges.find((c) => c.path === s.systemDoc);
+      expect(
+        system?.content,
+        `Expected the system to list the new service. Catalog changes were:\n${changedList(output)}`
+      ).toMatch(/services:[\s\S]*refund/i);
     });
   }
 );

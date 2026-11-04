@@ -12,8 +12,8 @@ importers:
         specifier: 0.1.1
         version: 0.1.1
       '@eventcatalog/sdk':
-        specifier: 2.24.1
-        version: 2.24.1
+        specifier: 2.32.0
+        version: 2.32.0
       '@flue/runtime':
         specifier: ^2.3.0
         version: 2.3.0(@aws-sdk/credential-provider-node@3.972.86)(@smithy/signature-v4@5.7.4)(typescript@5.9.3)(ws@8.21.0)(zod@4.6.7)
@@ -318,9 +318,6 @@ packages:
 
   '@eventcatalog/fitness@0.1.1':
     resolution: {integrity: sha512-ha+TFdnkmiqrikuXKR5K0myl8mFl+A3+H7d7WxiG7viKY+0Bvt8UueAQTtSLx0QMxxPExd3YFC0GCGoDWQgHCw==}
-
-  '@eventcatalog/sdk@2.24.1':
-    resolution: {integrity: sha512-P3qiHFRIowpVydbv0NE7HdU6NvOhaF5qW89h1lAKtk8exYuvxnm68D5sTAa3yui6JLEfAF4p8Zim5d4crYupwQ==}
 
   '@eventcatalog/sdk@2.32.0':
     resolution: {integrity: sha512-AZlSKM/JdGKi/2tWUB4My9DdyqgXhEAnYIfyw/Ovo5gcWl6lHNBc/oUC/6oi0ag6H0SUWGE6QdfqaYfrqyTo4A==}
@@ -1813,15 +1810,6 @@ snapshots:
       '@eventcatalog/sdk': 2.32.0
       gray-matter: 4.0.3
       jiti: 2.7.0
-
-  '@eventcatalog/sdk@2.24.1':
-    dependencies:
-      fs-extra: 11.3.5
-      glob: 13.0.6
-      gray-matter: 4.0.3
-      proper-lockfile: 4.1.2
-      semver: 7.7.3
-      slugify: 1.6.9
 
   '@eventcatalog/sdk@2.32.0':
     dependencies:

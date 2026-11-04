@@ -1,6 +1,8 @@
 import { defineTool } from '@flue/runtime';
 import utils from '@eventcatalog/sdk';
 
+type ResourcePointer = { id?: string };
+
 type CatalogResource = {
   _eventcatalog?: {
     directory?: string;
@@ -10,12 +12,16 @@ type CatalogResource = {
   owners?: unknown;
   summary?: string;
   version?: string;
+  /** Systems only: the services and data stores the system contains. */
+  services?: ResourcePointer[];
+  containers?: ResourcePointer[];
 };
 
 type CatalogDump = {
   catalogVersion?: string;
   createdAt?: string;
   resources?: {
+    adrs?: CatalogResource[];
     agents?: CatalogResource[];
     channels?: CatalogResource[];
     containers?: CatalogResource[];
@@ -28,6 +34,7 @@ type CatalogDump = {
       queries?: CatalogResource[];
     };
     services?: CatalogResource[];
+    systems?: CatalogResource[];
   };
   version?: string;
 };
@@ -40,6 +47,9 @@ type CatalogIndexResource = {
   summary?: string;
   type: string;
   version?: string;
+  /** Systems only: ids of the services and data stores the system lists in its frontmatter. */
+  services?: string[];
+  containers?: string[];
 };
 
 const isVersionedPath = (path: string | undefined): boolean => path?.split('/').includes('versioned') ?? false;
@@ -65,6 +75,8 @@ const compactResource = (type: string, resource: CatalogResource): CatalogIndexR
   }
 
   const path = resource._eventcatalog?.directory;
+  const ids = (pointers: ResourcePointer[] | undefined) =>
+    (pointers ?? []).flatMap((pointer) => (pointer.id ? [pointer.id] : []));
 
   return {
     id: resource.id,
@@ -74,6 +86,7 @@ const compactResource = (type: string, resource: CatalogResource): CatalogIndexR
     summary: resource.summary,
     type,
     version: resource.version,
+    ...(type === 'system' ? { services: ids(resource.services), containers: ids(resource.containers) } : {}),
   };
 };
 
@@ -83,9 +96,10 @@ const compactResources = (type: string, resources: CatalogResource[] | undefined
     return compact ? [compact] : [];
   });
 
-const createCatalogIndex = (catalog: CatalogDump) => {
+export const createCatalogIndex = (catalog: CatalogDump) => {
   const resources = [
     ...compactResources('domain', catalog.resources?.domains),
+    ...compactResources('system', catalog.resources?.systems),
     ...compactResources('service', catalog.resources?.services),
     ...compactResources('agent', catalog.resources?.agents),
     ...compactResources('event', catalog.resources?.messages?.events),
@@ -95,6 +109,7 @@ const createCatalogIndex = (catalog: CatalogDump) => {
     ...compactResources('entity', catalog.resources?.entities),
     ...compactResources('container', catalog.resources?.containers),
     ...compactResources('flow', catalog.resources?.flows),
+    ...compactResources('adr', catalog.resources?.adrs),
   ];
 
   return {
@@ -116,7 +131,8 @@ const createCatalogIndex = (catalog: CatalogDump) => {
 export const createDumpCatalogTool = (catalogPath: string) =>
   defineTool({
     name: 'dump_catalog',
-    description: 'Dump a compact index of EventCatalog resources with IDs, names, versions, summaries, and paths',
+    description:
+      'Dump a compact index of EventCatalog resources (domains, systems, services, agents, messages, channels, entities, data stores, flows, ADRs) with IDs, names, versions, summaries, and paths. Systems also list the services and data stores they contain.',
     run: async () => {
       if (!catalogPath) {
         throw new Error('Catalog path is not defined. Please provide a valid catalog path.');
