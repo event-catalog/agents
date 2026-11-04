@@ -10,6 +10,8 @@ import { orderConfirmedSchemaChange } from './fixtures/order-confirmed-schema-ch
 import { serviceUsesDatabase } from './fixtures/service-uses-database/scenario';
 import { servicePublishesOverKafka } from './fixtures/service-publishes-over-kafka/scenario';
 import { newServiceWithOpenapi } from './fixtures/new-service-with-openapi/scenario';
+import { messageVersionBump } from './fixtures/message-version-bump/scenario';
+import { readFrontmatterVersion } from '@/src/utils/archive-versions';
 
 /**
  * Each test runs the REAL code-to-docs agent (real model, tools, and skill) against a fixture ONCE
@@ -181,6 +183,50 @@ describeEval(
         referencesSpec,
         `Expected the service to reference its OpenAPI spec (specifications/schemaPath). Got:\n${service?.content}`
       ).toBe(true);
+    });
+
+    it('bumps a message for a breaking change: updates the producer pin, leaves consumers, and archives the old version', async ({
+      run,
+    }) => {
+      const { output } = await run(messageVersionBump.input);
+      reportRun(output);
+      const s = messageVersionBump;
+      const changed = (path: string) => output.catalogChanges.find((c) => c.path === path);
+
+      // Plan: a schema change to the existing event.
+      expectGoodPlan(output, s.planExpectation);
+
+      // The workflow pre-approved the resources that pin 1.0.0, so updating them is not off-plan.
+      expectNoUnauthorizedEdits(output);
+
+      // Apply: the schema has the new shape and the event moved to 2.0.0.
+      const schema = changed(`${s.eventFolder}/schema.json`);
+      expect(
+        schema?.content,
+        `Expected OrderConfirmed/schema.json to change. Catalog changes were:\n${changedList(output)}`
+      ).toContain('"total"');
+      const eventDoc = changed(`${s.eventFolder}/index.mdx`);
+      expect(
+        readFrontmatterVersion(eventDoc?.content ?? ''),
+        `Expected OrderConfirmed to be bumped. Got:\n${eventDoc?.content}`
+      ).toBe(s.newVersion);
+
+      // Apply: the producer now sends 2.0.0; the untouched consumers keep their pins.
+      expect(changed(s.producer)?.content, `Expected OrdersService to send ${s.newVersion}`).toMatch(
+        new RegExp(`id: OrderConfirmed\\s*\\n\\s*version: ['"]?${s.newVersion.replaceAll('.', '\\.')}`)
+      );
+      const consumer = changed(s.consumer);
+      expect(consumer?.content ?? 'unchanged', 'InventoryService is not changed by the PR, so it stays on 1.0.0').not.toContain(
+        `version: ${s.newVersion}`
+      );
+      expect(changed(s.latestConsumer), 'BillingService pins latest and should not be edited').toBeUndefined();
+
+      // The workflow archived 1.0.0 under versioned/.
+      expect(output.archivedVersions).toEqual([{ path: s.eventFolder, version: s.previousVersion }]);
+      expect(changed(`${s.eventFolder}/versioned/${s.previousVersion}/index.mdx`)).toBeDefined();
+
+      // The agent checked its work against the catalog's fitness functions.
+      expect(output.toolCalls.map((call) => call.name)).toContain('fitness_check');
     });
   }
 );

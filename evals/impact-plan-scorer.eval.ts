@@ -12,6 +12,7 @@ import { orderRefunded } from './fixtures/order-refunded/scenario';
 const goodPlan: ImpactPlanResponse = {
   catalogChangesRequired: true,
   sourcePrSummary: 'Adds support for refunding orders and publishing OrderRefunded.',
+  catalogImpactSummary: 'OrderRefunded is a new event, so it needs documenting and adding to OrdersService.',
   sourceChanges: [
     {
       confidence: 'high',

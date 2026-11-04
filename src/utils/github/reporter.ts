@@ -1,57 +1,190 @@
 import { Octokit } from 'octokit';
 import type { ReviewConfig } from '@/src/config';
-import { isPromptResponse, type BreakingChangeResponse, type SchemaConsumersResponse } from '@/src/review-output';
+import type { BreakingChangeResponse, ImpactPlanResponse, SchemaConsumersResponse } from '@/src/review-output';
+import type { ResourceChange } from '@/src/utils/catalog-changes';
+import {
+  formatInlineCode,
+  formatInlineText,
+  formatPullRequestReference,
+  formatResourceChanges,
+  listReviewNotes,
+  maxBacktickRun,
+} from '@/src/utils/github/format';
 
 const COMMENT_MARKER = '<!-- eventcatalog-actions:pr-review -->';
 const BREAKING_CHANGES_COMMENT_MARKER = '<!-- eventcatalog-actions:breaking-changes -->';
-const MAX_RESULT_CHARS = 12000;
+const ISSUES_URL = 'https://github.com/event-catalog/agents/issues';
 
-interface ReviewCommentInput {
-  catalogPath: string;
-  catalogPullRequestUrl?: string;
-  changedFiles: string[];
-  result: unknown;
-}
+/** What a Code-to-Docs run did, for the comment on the source pull request. */
+export type ReviewComment =
+  | {
+      /** The catalog was updated: a catalog pull request was opened or updated. */
+      kind: 'catalog-updated';
+      catalogPullRequestUrl?: string;
+      changes: ResourceChange[];
+      impactPlan: ImpactPlanResponse;
+      reviewedFiles: number;
+    }
+  | {
+      /** The review found nothing to document. */
+      kind: 'no-changes';
+      impactPlan: ImpactPlanResponse;
+      reviewedFiles: number;
+      /** Extra context, e.g. when the agent planned changes but ended up making none. */
+      note?: string;
+    }
+  | {
+      /** The agent edited files outside its approved plan, so nothing was pushed. */
+      kind: 'off-plan';
+      impactPlan: ImpactPlanResponse;
+      unauthorizedChanges: string[];
+      reviewedFiles: number;
+    }
+  | {
+      /** The review could not run, e.g. the catalog is missing or the token can't reach it. */
+      kind: 'not-run';
+      reason: string;
+      nextStep: string;
+    };
 
-const truncate = (value: string, maxLength: number): string => {
-  if (value.length <= maxLength) {
-    return value;
-  }
+type CommentContext = Pick<ReviewConfig, 'catalogRepo' | 'catalogRef'>;
 
-  return `${value.slice(0, maxLength)}\n\n...truncated`;
+const formatFooter = (context: CommentContext, reviewedFiles?: number): string => {
+  const catalog = context.catalogRepo
+    ? `catalog [${context.catalogRepo}@${context.catalogRef}](https://github.com/${context.catalogRepo}/tree/${encodeURI(context.catalogRef)})`
+    : undefined;
+  const reviewed =
+    reviewedFiles === undefined ? undefined : `reviewed ${reviewedFiles} changed file${reviewedFiles === 1 ? '' : 's'}`;
+  return `<sub>${['EventCatalog Agents · Code-to-Docs', reviewed, catalog].filter(Boolean).join(' · ')}</sub>`;
 };
 
-const formatResult = (result: unknown): string => {
-  if (typeof result === 'string') {
-    return result;
-  }
-
-  if (result && typeof result === 'object') {
-    if (isPromptResponse(result)) {
-      return result.sourcePrSummary;
-    }
-
-    const record = result as Record<string, unknown>;
-    const summary = record.sourcePrSummary || record.summary || record.message || record.text || record.output;
-
-    if (typeof summary === 'string' && summary.trim()) {
-      return summary;
-    }
-
-    return `\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``;
-  }
-
-  return String(result ?? 'No review output was returned.');
+const formatNotes = (plan: ImpactPlanResponse): string => {
+  const notes = listReviewNotes(plan);
+  return notes.length > 0 ? `\n\n**Worth checking**\n\n${notes.map((note) => `- ${note}`).join('\n')}` : '';
 };
 
-const maxBacktickRun = (value: string): number => Math.max(0, ...Array.from(value.matchAll(/`+/g), (match) => match[0].length));
+const impactSummary = (plan: ImpactPlanResponse): string =>
+  formatInlineText(plan.catalogImpactSummary || plan.sourcePrSummary || 'No summary was returned.');
+
+export const formatReviewComment = (comment: ReviewComment, context: CommentContext): string => {
+  switch (comment.kind) {
+    case 'catalog-updated': {
+      const pullRequest = comment.catalogPullRequestUrl
+        ? `Opened [${formatPullRequestReference(comment.catalogPullRequestUrl)}](${comment.catalogPullRequestUrl}) to keep the catalog in sync with this pull request.`
+        : 'Updated the catalog to keep it in sync with this pull request.';
+
+      return `${COMMENT_MARKER}
+### 📘 EventCatalog docs updated
+
+${pullRequest}
+
+${formatResourceChanges(comment.changes)}${formatNotes(comment.impactPlan)}
+
+${formatFooter(context, comment.reviewedFiles)}
+`;
+    }
+
+    case 'no-changes':
+      return `${COMMENT_MARKER}
+### 📘 No EventCatalog changes needed
+
+${impactSummary(comment.impactPlan)}${comment.note ? `\n\n${formatInlineText(comment.note)}` : ''}${formatNotes(comment.impactPlan)}
+
+${formatFooter(context, comment.reviewedFiles)}
+`;
+
+    case 'off-plan': {
+      const planned = comment.impactPlan.proposedCatalogTargets
+        .map((target) => `- ${formatInlineCode(target.path)} (${formatInlineText(target.action)})`)
+        .join('\n');
+      const unplanned = comment.unauthorizedChanges.map((file) => `- ${formatInlineCode(file)}`).join('\n');
+
+      return `${COMMENT_MARKER}
+### ⚠️ EventCatalog docs not updated
+
+The agent edited catalog files outside the plan it was approved to change, so nothing was pushed and no catalog pull request was opened.
+
+**Planned changes**
+
+${planned || '- (none)'}
+
+**Edited outside the plan**
+
+${unplanned}
+
+**Next step:** re-run this workflow to try again, or make the planned changes by hand. If it keeps happening, please [open an issue](${ISSUES_URL}).
+
+${formatFooter(context, comment.reviewedFiles)}
+`;
+    }
+
+    case 'not-run':
+      return `${COMMENT_MARKER}
+### ⏭️ EventCatalog docs not checked
+
+${formatInlineText(comment.reason)}
+
+**Next step:** ${formatInlineText(comment.nextStep)}
+
+${formatFooter(context)}
+`;
+  }
+};
+
+/**
+ * Creates a new pull request comment, or updates the existing one that carries `marker`. Both the
+ * PR review and breaking-changes workflows post a single, self-updating comment this way, so reruns
+ * replace their previous comment instead of stacking up new ones.
+ */
+const upsertPullRequestComment = async (config: ReviewConfig, marker: string, body: string): Promise<string | undefined> => {
+  if (!config.github) {
+    console.error('[eventcatalog:github] No GitHub PR context found; skipping pull request comment.');
+    return undefined;
+  }
+
+  const { owner, repo, prNumber, token } = config.github;
+  const octokit = new Octokit({ auth: token });
+
+  const { data: comments } = await octokit.rest.issues.listComments({
+    owner,
+    repo,
+    issue_number: prNumber,
+    per_page: 100,
+  });
+
+  const existingComment = comments.find((comment) => comment.body?.includes(marker));
+
+  if (existingComment) {
+    const { data } = await octokit.rest.issues.updateComment({
+      owner,
+      repo,
+      comment_id: existingComment.id,
+      body,
+    });
+
+    console.error(`[eventcatalog:github] Updated pull request comment: ${data.html_url}`);
+    return data.html_url;
+  }
+
+  const { data } = await octokit.rest.issues.createComment({
+    owner,
+    repo,
+    issue_number: prNumber,
+    body,
+  });
+
+  console.error(`[eventcatalog:github] Created pull request comment: ${data.html_url}`);
+  return data.html_url;
+};
+
+export const postPullRequestSummary = async (config: ReviewConfig, comment: ReviewComment): Promise<string | undefined> =>
+  upsertPullRequestComment(config, COMMENT_MARKER, formatReviewComment(comment, config));
 
 const formatCodeBlock = (value: string, language = ''): string => {
   const content = value.replace(/\r\n?/g, '\n').trimEnd() || '(No diff lines returned.)';
   const fence = '`'.repeat(Math.max(3, maxBacktickRun(content) + 1));
-  const languageSuffix = language ? language : '';
 
-  return `${fence}${languageSuffix}\n${content}\n${fence}`;
+  return `${fence}${language}\n${content}\n${fence}`;
 };
 
 const formatMermaidBlock = (value: string): string => {
@@ -68,16 +201,6 @@ const formatMermaidBlock = (value: string): string => {
 
   return formatCodeBlock(normalized, 'mermaid');
 };
-
-const formatInlineCode = (value: string): string => {
-  const content = value.replace(/\s+/g, ' ').trim();
-  const fence = '`'.repeat(Math.max(1, maxBacktickRun(content) + 1));
-  const padding = content.includes('`') ? ' ' : '';
-
-  return `${fence}${padding}${content || '(empty)'}${padding}${fence}`;
-};
-
-const formatInlineText = (value: string): string => value.replace(/\s+/g, ' ').trim();
 
 const formatMarkdownLink = (label: string, url: string): string => `[${label.replace(/[[\]\\]/g, '\\$&')}](${url})`;
 
@@ -138,78 +261,6 @@ const buildOwnerUrl = (catalogUrl: string | undefined, owner: string): string | 
   return `${baseUrl}/docs/teams/${encodeUrlSegment(owner)}`;
 };
 
-const formatReviewComment = ({ catalogPath, catalogPullRequestUrl, changedFiles, result }: ReviewCommentInput): string => {
-  const files = changedFiles.length > 0 ? changedFiles.map((file) => `- \`${file}\``).join('\n') : '- No files reviewed';
-  const summary = truncate(formatResult(result), MAX_RESULT_CHARS);
-  const catalogPullRequest = catalogPullRequestUrl ? `\n\n## Catalog Pull Request\n\n${catalogPullRequestUrl}` : '';
-
-  return `${COMMENT_MARKER}
-# EventCatalog PR Review
-
-## Summary
-
-${summary}
-
-## Files Reviewed
-
-${files}
-
-## Catalog
-
-\`${catalogPath}\`
-${catalogPullRequest}
-`;
-};
-
-/**
- * Creates a new pull request comment, or updates the existing one that carries `marker`. Both the
- * PR review and breaking-changes workflows post a single, self-updating comment this way, so reruns
- * replace their previous comment instead of stacking up new ones.
- */
-const upsertPullRequestComment = async (config: ReviewConfig, marker: string, body: string): Promise<string | undefined> => {
-  if (!config.github) {
-    console.error('[eventcatalog:github] No GitHub PR context found; skipping pull request comment.');
-    return undefined;
-  }
-
-  const { owner, repo, prNumber, token } = config.github;
-  const octokit = new Octokit({ auth: token });
-
-  const { data: comments } = await octokit.rest.issues.listComments({
-    owner,
-    repo,
-    issue_number: prNumber,
-    per_page: 100,
-  });
-
-  const existingComment = comments.find((comment) => comment.body?.includes(marker));
-
-  if (existingComment) {
-    const { data } = await octokit.rest.issues.updateComment({
-      owner,
-      repo,
-      comment_id: existingComment.id,
-      body,
-    });
-
-    console.error(`[eventcatalog:github] Updated pull request comment: ${data.html_url}`);
-    return data.html_url;
-  }
-
-  const { data } = await octokit.rest.issues.createComment({
-    owner,
-    repo,
-    issue_number: prNumber,
-    body,
-  });
-
-  console.error(`[eventcatalog:github] Created pull request comment: ${data.html_url}`);
-  return data.html_url;
-};
-
-export const postPullRequestSummary = async (config: ReviewConfig, input: ReviewCommentInput): Promise<string | undefined> =>
-  upsertPullRequestComment(config, COMMENT_MARKER, formatReviewComment(input));
-
 /** One scored schema paired with the catalog consumers it could break. */
 export interface BreakingSchemaReport {
   breakingChange: BreakingChangeResponse;
@@ -237,7 +288,17 @@ const formatAffectedConsumer = (consumer: SchemaConsumersResponse['consumers'][n
   - Reason: ${formatInlineText(consumer.reason)}${owners}`;
 };
 
+const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`;
+
 export const formatBreakingChangesComment = (reports: BreakingSchemaReport[], catalogUrl?: string): string => {
+  const consumerCount = new Set(
+    reports.flatMap(({ consumers }) => consumers.map((consumer) => `${consumer.type}:${consumer.id}`))
+  ).size;
+  const headline =
+    consumerCount > 0
+      ? `This pull request makes breaking changes to ${plural(reports.length, 'schema')} used by ${plural(consumerCount, 'consumer')} documented in EventCatalog. Check with their owners before merging.`
+      : `This pull request makes breaking changes to ${plural(reports.length, 'schema')}. EventCatalog documents no consumers for ${reports.length === 1 ? 'it' : 'them'}.`;
+
   const sections = reports
     .map(({ breakingChange, consumers, diagram }) => {
       const changes =
@@ -255,27 +316,32 @@ export const formatBreakingChangesComment = (reports: BreakingSchemaReport[], ca
           ? consumers.map((consumer) => formatAffectedConsumer(consumer, catalogUrl)).join('\n')
           : 'No consumers of this schema were found in the EventCatalog.';
 
-      const flowDiagram = diagram?.trim() ? `#### Impact diagram\n\n${formatMermaidBlock(diagram)}\n\n` : '';
+      const flowDiagram = diagram?.trim() ? `**Impact diagram**\n\n${formatMermaidBlock(diagram)}\n\n` : '';
 
-      return `### ${formatInlineCode(breakingChange.fileName)}
+      return `#### ${formatInlineCode(breakingChange.fileName)}
 
 **Confidence:** ${formatInlineText(breakingChange.confidence)}
 
 ${formatInlineText(breakingChange.summary)}
 
-#### Breaking changes
+**Breaking changes**
 
 ${changes}
 
-${flowDiagram}
-#### Affected consumers
+${flowDiagram}**Affected consumers**
 
 ${consumersList}`;
     })
     .join('\n\n');
 
   return `${BREAKING_CHANGES_COMMENT_MARKER}
+### ⚠️ Breaking schema changes
+
+${headline}
+
 ${sections}
+
+<sub>EventCatalog Agents · Breaking Changes</sub>
 `;
 };
 

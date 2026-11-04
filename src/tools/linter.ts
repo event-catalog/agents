@@ -1,9 +1,14 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { defineTool } from '@flue/runtime';
+import { archivePreviousVersions } from '@/src/utils/archive-versions';
+import { childProcessEnv, getCatalogPackageVersion } from '@/src/utils/child-process-env';
 import { getChangedCatalogFiles } from '@/src/utils/eventcatalog-utils';
 
 const execFileAsync = promisify(execFile);
+
+/** Used when the catalog doesn't pin `@eventcatalog/linter` itself. */
+export const DEFAULT_LINTER_VERSION = '1.3.1';
 
 type LinterResult = {
   changedFiles: string[];
@@ -39,11 +44,13 @@ export const createLinterTool = (catalogPath: string) =>
     name: 'linter',
     description: 'Run the EventCatalog linter in the catalog directory and return stdout, stderr, and exit code',
     run: async ({ signal }) => {
-      const command = 'npx @eventcatalog/linter';
-
       if (!catalogPath) {
         throw new Error('Catalog path is not defined. Please provide a valid catalog path.');
       }
+
+      // The catalog's own linter version, so results match its CI; never an unpinned "latest".
+      const linterPackage = `@eventcatalog/linter@${getCatalogPackageVersion(catalogPath, '@eventcatalog/linter') ?? DEFAULT_LINTER_VERSION}`;
+      const command = `npx --yes ${linterPackage}`;
 
       const changedFiles = await getChangedCatalogFiles(catalogPath);
 
@@ -64,11 +71,14 @@ export const createLinterTool = (catalogPath: string) =>
         return { output: result };
       }
 
+      // Archive the previous version of anything re-versioned first, so pins to it still resolve.
+      await archivePreviousVersions(catalogPath);
       console.error(`[eventcatalog:linter] Running "${command}" in ${catalogPath}`);
 
       try {
-        const { stderr, stdout } = await execFileAsync('npx', ['@eventcatalog/linter'], {
+        const { stderr, stdout } = await execFileAsync('npx', ['--yes', linterPackage], {
           cwd: catalogPath,
+          env: childProcessEnv(),
           maxBuffer: 1024 * 1024 * 20,
           signal,
         });

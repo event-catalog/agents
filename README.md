@@ -50,12 +50,18 @@ When a pull request is opened, the Code-to-Docs agent:
    documentation changes, and if so, exactly which catalog resources should change. If nothing is
    needed, the run stops here and says so.
 4. **Applies the plan** — the agent updates the catalog documentation, using the bundled
-   EventCatalog skill for correct frontmatter and folder structure, and a linter to validate its
-   changes. It is only allowed to touch the resources approved in the plan; edits outside that plan
-   are rejected.
-5. **Opens a catalog PR** — commits the changes to an `eventcatalog-actions/...` branch in your
-   catalog repository and opens or updates a pull request against `catalog-ref`.
-6. **Comments on the source PR** with a high-level summary and a link to the catalog PR.
+   EventCatalog skill for correct frontmatter and folder structure. It checks its changes with the
+   EventCatalog linter (the version your catalog pins) and with your catalog's
+   [fitness functions](#fitness-functions), and fixes problems its changes caused. It is only allowed
+   to touch the resources approved in the plan; edits outside that plan are rejected.
+5. **Handles version bumps** — when the agent bumps a message's version (for a breaking change), the
+   services and agents that pin the old version are approved for editing automatically, and the
+   previous version is archived to `versioned/<version>/` so it stays documented.
+6. **Opens a catalog PR** — commits the changes to an `eventcatalog-actions/...` branch in your
+   catalog repository and opens or updates a pull request against `catalog-ref`. Its description
+   links the source PR, lists the resources that changed, and flags anything worth checking.
+7. **Comments on the source PR** with the catalog PR link and a table of the catalog resources it
+   added, updated, or removed. If it couldn't update the docs, the comment says why and what to do.
 
 Deterministic work (diff parsing, path resolution, git writes, token preflight, change detection)
 stays in TypeScript. The agent is responsible only for reasoning about documentation.
@@ -122,7 +128,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: event-catalog/agents@main
+      - uses: event-catalog/agents@v2
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
@@ -143,7 +149,7 @@ Each Action step runs a single `agent`. To run more than one, add another step i
 second workflow file):
 
 ```yaml
-- uses: event-catalog/agents@main
+- uses: event-catalog/agents@v2
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   with:
@@ -152,7 +158,7 @@ second workflow file):
     catalog-url: https://catalog.example.com
     catalog-token: ${{ secrets.EVENTCATALOG_TOKEN }}
 
-- uses: event-catalog/agents@main
+- uses: event-catalog/agents@v2
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   with:
@@ -166,16 +172,18 @@ second workflow file):
 
 ### Inputs
 
-| Input               | Required | Default                       | Description                                                                                                                                       |
-| ------------------- | -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent`             | No       | `code-to-docs`                | Which agent to run: `code-to-docs` or `breaking-changes`.                                                                                         |
-| `catalog-repo`      | Yes      |                               | EventCatalog repository to read/document, in `owner/repo` format.                                                                                 |
-| `catalog-ref`       | No       | `main`                        | Branch checked out from the catalog repository and targeted by documentation PRs.                                                                 |
-| `catalog-token`     | No       | `github.token`                | Token used to check out the catalog repository and open documentation pull requests.                                                              |
-| `catalog-url`       | No       |                               | URL of your hosted EventCatalog. When set, Breaking Changes comments link affected consumers and owner teams to catalog pages.                    |
-| `model`             | No       | `anthropic/claude-sonnet-4-6` | Model specifier for the agent. See [available models](https://pi.dev/models).                                                                     |
-| `ignore-paths`      | No       | see [action.yml](action.yml)  | Comma-separated paths or glob patterns to ignore in PR diffs.                                                                                     |
-| `schema-extensions` | No       | see [action.yml](action.yml)  | Comma-separated file extensions the Breaking Changes agent treats as message schemas. Add others (e.g. `.js`) to match where your contracts live. |
+| Input                    | Required | Default                       | Description                                                                                                                                       |
+| ------------------------ | -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent`                  | No       | `code-to-docs`                | Which agent to run: `code-to-docs` or `breaking-changes`.                                                                                         |
+| `catalog-repo`           | Yes      |                               | EventCatalog repository to read/document, in `owner/repo` format.                                                                                 |
+| `catalog-ref`            | No       | `main`                        | Branch checked out from the catalog repository and targeted by documentation PRs.                                                                 |
+| `catalog-token`          | No       | `github.token`                | Token used to check out the catalog repository and open documentation pull requests. Not needed with a [GitHub App](#using-a-github-app).         |
+| `github-app-client-id`   | No       |                               | Client ID of a GitHub App installed on the catalog repository. With `github-app-private-key`, the agent uses the App instead of `catalog-token`.  |
+| `github-app-private-key` | No       |                               | Private key of that GitHub App. Pass it from a secret.                                                                                            |
+| `catalog-url`            | No       |                               | URL of your hosted EventCatalog. When set, Breaking Changes comments link affected consumers and owner teams to catalog pages.                    |
+| `model`                  | No       | `anthropic/claude-sonnet-4-6` | Model specifier for the agent. See [available models](https://pi.dev/models).                                                                     |
+| `ignore-paths`           | No       | see [action.yml](action.yml)  | Comma-separated paths or glob patterns to ignore in PR diffs.                                                                                     |
+| `schema-extensions`      | No       | see [action.yml](action.yml)  | Comma-separated file extensions the Breaking Changes agent treats as message schemas. Add others (e.g. `.js`) to match where your contracts live. |
 
 The agents run on [Flue](https://flueframework.com), which supports models from many providers — see
 the full list of model specifiers at [pi.dev/models](https://pi.dev/models).
@@ -201,6 +209,70 @@ The catalog is always checked out to `eventcatalog/` under `$GITHUB_WORKSPACE`. 
 lives in a **different** repository from your source code, provide a `catalog-token` with permission
 to read it — and, for Code-to-Docs, to push branches and open pull requests in it (the default
 `github.token` only has access to the current repository).
+
+### Using a GitHub App
+
+Instead of a personal access token, you can give the agent a GitHub App. Catalog pull requests are
+then opened by the App's bot account rather than a person, and the agent gets a token that is scoped
+to the catalog repository and expires after an hour.
+
+1. [Create a GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)
+   in your organization with these repository permissions: **Contents: Read and write** and
+   **Pull requests: Read and write**. It doesn't need a webhook.
+2. Generate a private key for the App, and install the App on your catalog repository.
+3. Add the App's Client ID and private key to your source repository's secrets, and pass them to the
+   action instead of `catalog-token`:
+
+```yaml
+- uses: event-catalog/agents@v2
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  with:
+    agent: code-to-docs
+    catalog-repo: your-org/your-catalog
+    github-app-client-id: ${{ vars.EVENTCATALOG_APP_CLIENT_ID }}
+    github-app-private-key: ${{ secrets.EVENTCATALOG_APP_PRIVATE_KEY }}
+```
+
+### Fitness functions
+
+[Fitness functions](https://www.eventcatalog.dev/docs) are architecture rules you write for your
+catalog, in `fitness/*.fitness.ts` files (for example "every event has a single producer"). When your
+catalog has them, the Code-to-Docs agent runs them after making its changes and fixes any problems its
+changes introduced. Problems that were already in your catalog are left alone.
+
+Fitness functions are code from your catalog repository, so the agent runs them in a separate process
+that does not receive your model provider key or GitHub tokens. The agent can never create or edit
+fitness functions: a run that tries is rejected as off-plan.
+
+We recommend also running the linter, your fitness functions and a build in your catalog repository's
+own CI, so every pull request — the agent's included — is checked before it is merged:
+
+```yaml
+# .github/workflows/catalog-checks.yml in your catalog repository
+on: pull_request
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npx eventcatalog-linter
+      - run: npx eventcatalog fitness check
+      - run: npx eventcatalog build
+```
+
+### Usage analytics
+
+The action sends one anonymous event per run so we can see how the agents are used. It contains the
+run's outcome (and, for a failed run, the kind of error, such as an invalid model provider key), the
+model, the run's duration, the repository name, and for Code-to-Docs, how many of the agent's catalog
+pull requests are open, merged, or closed without merging. It never contains anything from your
+repositories: no code, file names, paths, diffs, or pull request content. Set `POSTHOG_KEY: ""` in
+the step's `env` to turn it off.
 
 ## Development
 

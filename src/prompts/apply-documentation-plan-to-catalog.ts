@@ -23,7 +23,7 @@ export const buildApplyDocumentationPlanPrompt = (
   `\n\nYou may only edit catalog files under these approved target paths:
 ${impactPlan.proposedCatalogTargets.map((target) => `- ${target.path}: ${target.reason}`).join('\n')}
 
-Use the \`dump_catalog\` tool if needed to locate existing resources. Update the documentation in the eventcatalog directory (${catalogPath}) only for the approved targets. If the approved plan is insufficient, do not improvise unrelated catalog changes; explain that limitation in the structured response. Use the \`linter\` tool after making catalog changes. When finished, return structured output with a descriptive catalog PR title, a catalog PR summary explaining what changed and why, and a concise high-level source PR summary.`;
+Use the \`dump_catalog\` tool if needed to locate existing resources. Update the documentation in the eventcatalog directory (${catalogPath}) only for the approved targets. If the approved plan is insufficient, do not improvise unrelated catalog changes; explain that limitation in the structured response. Use the \`linter\` tool and then the \`fitness_check\` tool after making catalog changes. When finished, return structured output with a descriptive catalog PR title, a catalog PR summary explaining what changed and why, and a concise high-level source PR summary.`;
 
 /** Applies the approved plan, editing catalog files under the approved targets. */
 export const applyDocumentationPlan = async (

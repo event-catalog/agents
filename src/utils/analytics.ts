@@ -1,5 +1,7 @@
 import { PostHog } from 'posthog-node';
+import type { ReviewConfig } from '@/src/config';
 import { MISSING_CATALOG_MESSAGE } from '@/src/utils/eventcatalog-utils';
+import { getAgentPullRequestStats } from '@/src/utils/github/catalog-pr';
 
 // Public Keys.
 const DEFAULT_POSTHOG_KEY = 'phc_HQZncKORYsXgO87WuSjSdKbQSTzylljE6HTtUw0fBIH';
@@ -20,25 +22,73 @@ export type PrReviewOutcome =
   | 'no_changed_files'
   | 'error';
 
+/**
+ * Why a run failed, by category only: never the error message, which can contain repository
+ * contents. Each category points at a different fix (a provider key, a GitHub token, the model).
+ */
+export type ErrorType =
+  | 'model_provider_auth'
+  | 'model_provider_billing'
+  | 'model_rate_limit'
+  | 'invalid_model_output'
+  | 'github_access'
+  | 'timeout'
+  | 'unknown';
+
 // The shape of whatever the workflow returned. We only read the few fields that tell us the
 // outcome, so this stays loose on purpose and the workflow keeps returning its normal result.
 // We deliberately do NOT read anything about the contents of a user's repo (file counts, paths,
 // diffs) — only the high-level outcome of the run.
 type PrReviewResult = {
   message?: string;
-  catalogPullRequest?: unknown;
+  catalogPullRequest?: { skipped?: boolean };
   unauthorizedCatalogChanges?: unknown;
 };
 
 // Derive the analytics outcome from a workflow result by its structure, so the workflow body
 // never has to label its own exit points for analytics.
 function outcomeFromResult(result: PrReviewResult): PrReviewOutcome {
-  if (result.catalogPullRequest) return 'catalog_pr_created';
+  if (result.catalogPullRequest && !result.catalogPullRequest.skipped) return 'catalog_pr_created';
   if (result.unauthorizedCatalogChanges) return 'unauthorized_changes_blocked';
   if (result.message === MISSING_CATALOG_MESSAGE) return 'catalog_missing';
-  if (result.message?.startsWith('EventCatalog action skipped:')) return 'access_denied';
+  if (result.message?.startsWith('EventCatalog agent skipped:')) return 'access_denied';
   if (result.message === 'No changed files found') return 'no_changed_files';
   return 'no_changes_required';
+}
+
+/** Sorts an error into an `ErrorType` from its message and status. Only the category is reported. */
+export function classifyError(error: unknown): ErrorType {
+  // Flue wraps the provider's failure: `AgentRunError` → `cause` (e.g. `OperationFailedError`, whose
+  // `meta.reason` holds the provider's response). Read the whole chain, not just the top message.
+  const parts: string[] = [];
+  let status: number | undefined;
+  let current: unknown = error;
+  for (let depth = 0; current !== undefined && current !== null && depth < 5; depth++) {
+    const record = (typeof current === 'object' ? current : {}) as {
+      status?: unknown;
+      meta?: { reason?: unknown };
+      cause?: unknown;
+    };
+    parts.push(current instanceof Error ? `${current.name} ${current.message}` : String(current));
+    if (typeof record.meta?.reason === 'string') parts.push(record.meta.reason);
+    if (status === undefined && record.status !== undefined && Number.isFinite(Number(record.status)))
+      status = Number(record.status);
+    current = record.cause;
+  }
+  const text = parts.join(' ').toLowerCase();
+
+  if (/credit balance|insufficient_quota|credit_balance|billing|quota exceeded/.test(text)) return 'model_provider_billing';
+  if (/x-api-key|api key|authentication_error|invalid_api_key|incorrect api key|unauthorized.*(anthropic|openai)/.test(text)) {
+    return 'model_provider_auth';
+  }
+  if (/rate.?limit|\b429\b|overloaded/.test(text)) return 'model_rate_limit';
+  if (/structured result|did not submit|submit_|valibot|schema validation|invalid.*output/.test(text))
+    return 'invalid_model_output';
+  if (status === 401 || status === 403 || status === 404 || /github|octokit|bad credentials|resource not accessible/.test(text)) {
+    return 'github_access';
+  }
+  if (/timed? ?out|timeout|aborterror|etimedout/.test(text)) return 'timeout';
+  return 'unknown';
 }
 
 // The outcome of a single breaking-changes run. Like PrReviewOutcome, each value maps to one of the
@@ -50,12 +100,15 @@ export type BreakingChangesOutcome =
   | 'no_changed_files'
   | 'error';
 
+type RunContext = { model?: string; durationMs: number };
+
 // posthog-node batches and sends in the background, so a short-lived CI process must flush before
 // it exits or events are lost. We create the client lazily and `shutdown()` it in the same call,
 // which is the simplest correct shape for a one-shot run. Analytics must never break a run, so
 // everything is wrapped and swallowed. The only properties we ever send are the high-level outcome,
-// the model, the run duration, and the repository — never anything about the contents of the repo.
-async function capture(event: string, outcome: string, context: { model?: string; durationMs: number }) {
+// the error category, the model, the run duration, the repository, and counts of the agent's own
+// catalog pull requests — never anything about the contents of the repo.
+async function capture(event: string, outcome: string, context: RunContext, extra: Record<string, unknown> = {}) {
   if (!ENABLED) return;
 
   const client = new PostHog(POSTHOG_KEY as string, { host: POSTHOG_HOST });
@@ -70,6 +123,7 @@ async function capture(event: string, outcome: string, context: { model?: string
         model: context.model,
         duration_ms: context.durationMs,
         repository: process.env.GITHUB_REPOSITORY,
+        ...extra,
       },
     });
     await client.shutdown();
@@ -78,23 +132,43 @@ async function capture(event: string, outcome: string, context: { model?: string
   }
 }
 
+/** Counts of the agent's catalog pull requests by state, as analytics properties. Best effort. */
+async function agentPullRequestProperties(config: ReviewConfig): Promise<Record<string, number>> {
+  if (!ENABLED) return {};
+  try {
+    const stats = await getAgentPullRequestStats(config);
+    return stats
+      ? {
+          agent_prs_open: stats.open,
+          agent_prs_merged_30d: stats.merged30d,
+          agent_prs_closed_unmerged_30d: stats.closedUnmerged30d,
+        }
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 // Record a completed PR-review run. Pass the workflow result and we work out the outcome from it.
-export function trackPrReviewCompleted(result: PrReviewResult, context: { model?: string; durationMs: number }) {
-  return capture('pr_review_completed', outcomeFromResult(result), context);
+export async function trackPrReviewCompleted(config: ReviewConfig, result: PrReviewResult, context: RunContext) {
+  return capture('pr_review_completed', outcomeFromResult(result), context, await agentPullRequestProperties(config));
 }
 
 // Record a PR-review run that threw before producing a result.
-export function trackPrReviewError(context: { model?: string; durationMs: number }) {
-  return capture('pr_review_completed', 'error', context);
+export async function trackPrReviewError(config: ReviewConfig, error: unknown, context: RunContext) {
+  return capture('pr_review_completed', 'error', context, {
+    error_type: classifyError(error),
+    ...(await agentPullRequestProperties(config)),
+  });
 }
 
 // Record a completed breaking-changes run. The workflow labels its own outcome because, unlike
 // pr-review, its exit points are not distinguishable from the returned result shape alone.
-export function trackBreakingChangesCompleted(outcome: BreakingChangesOutcome, context: { model?: string; durationMs: number }) {
+export function trackBreakingChangesCompleted(outcome: BreakingChangesOutcome, context: RunContext) {
   return capture('breaking_changes_completed', outcome, context);
 }
 
 // Record a breaking-changes run that threw before producing a result.
-export function trackBreakingChangesError(context: { model?: string; durationMs: number }) {
-  return capture('breaking_changes_completed', 'error', context);
+export function trackBreakingChangesError(error: unknown, context: RunContext) {
+  return capture('breaking_changes_completed', 'error', context, { error_type: classifyError(error) });
 }

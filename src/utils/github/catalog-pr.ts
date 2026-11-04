@@ -2,13 +2,23 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Octokit } from 'octokit';
 import type { ReviewConfig } from '@/src/config';
-import type { PromptResponse } from '@/src/review-output';
+import type { ImpactPlanResponse, PromptResponse } from '@/src/review-output';
+import { describeCatalogChanges, getCatalogFileChanges, type ResourceChange } from '@/src/utils/catalog-changes';
 import { resolveCatalogPath } from '@/src/utils/eventcatalog-utils';
+import {
+  formatPullRequestReference,
+  formatResourceChanges,
+  listReviewNotes,
+  nestHeadings,
+  truncate,
+} from '@/src/utils/github/format';
 
 const execFileAsync = promisify(execFile);
 
 export interface CatalogPullRequestResult {
   changedFiles: string[];
+  /** The changed files grouped by catalog resource, for the source PR comment. */
+  changes: ResourceChange[];
   commitSha?: string;
   pullRequestUrl?: string;
   skipped: boolean;
@@ -20,6 +30,7 @@ export interface CatalogPreflightResult {
 }
 
 interface CreateCatalogPullRequestInput {
+  impactPlan: ImpactPlanResponse;
   result: PromptResponse;
 }
 
@@ -74,36 +85,41 @@ const slugify = (value: string): string =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 80);
 
+/** Every catalog branch the agent pushes starts with this, which is how its pull requests are recognised. */
+const CATALOG_BRANCH_PREFIX = 'eventcatalog-actions/';
+
 const getCatalogBranchName = (config: ReviewConfig): string => {
   const sourceRepo = config.github ? `${config.github.owner}-${config.github.repo}` : 'local';
   const sourcePr = config.github ? `pr-${config.github.prNumber}` : 'review';
 
-  return `eventcatalog-actions/${slugify(sourceRepo)}/${slugify(sourcePr)}`;
+  return `${CATALOG_BRANCH_PREFIX}${slugify(sourceRepo)}/${slugify(sourcePr)}`;
 };
 
-const truncate = (value: string, maxLength: number): string => {
-  if (value.length <= maxLength) {
-    return value;
-  }
-
-  return `${value.slice(0, maxLength)}\n\n...truncated`;
-};
-
-const formatCatalogPullRequestBody = (config: ReviewConfig, catalogChangedFiles: string[], result: PromptResponse): string => {
+export const formatCatalogPullRequestBody = (
+  config: Pick<ReviewConfig, 'github'>,
+  changes: ResourceChange[],
+  input: CreateCatalogPullRequestInput
+): string => {
   const sourcePullRequest = config.github
     ? `https://github.com/${config.github.owner}/${config.github.repo}/pull/${config.github.prNumber}`
     : undefined;
-  const catalogFiles = catalogChangedFiles.map((file) => `- \`${file}\``).join('\n');
+  const origin = sourcePullRequest
+    ? `for [${formatPullRequestReference(sourcePullRequest)}](${sourcePullRequest})`
+    : 'for a source code change';
+  const notes = listReviewNotes(input.impactPlan);
+  const summary = nestHeadings(truncate(input.result.prSummary.trim(), MAX_BODY_RESULT_CHARS), 3);
 
-  return `## Summary
+  return `> [!NOTE]
+> Opened by [EventCatalog Agents](https://github.com/event-catalog/agents) ${origin}. Review it like any other pull request before merging; pushing a new commit to the source pull request updates it.
 
-${truncate(result.prSummary, MAX_BODY_RESULT_CHARS)}
+## Changes
 
-${sourcePullRequest ? `Source pull request: ${sourcePullRequest}\n` : ''}
-## Catalog Files Changed
+${formatResourceChanges(changes)}
 
-${catalogFiles || '- No catalog files listed'}
-`;
+## Summary
+
+${summary || 'No summary was returned.'}
+${notes.length > 0 ? `\n## Worth checking\n\n${notes.map((note) => `- ${note}`).join('\n')}\n` : ''}`;
 };
 
 export const preflightCatalogPullRequestAccess = async (config: ReviewConfig): Promise<CatalogPreflightResult> => {
@@ -157,7 +173,7 @@ export const createOrUpdateCatalogPullRequest = async (
 
   if (!catalogRepository) {
     console.error('[eventcatalog:catalog-pr] No catalog repository configured; skipping catalog pull request.');
-    return { changedFiles: [], skipped: true };
+    return { changedFiles: [], changes: [], skipped: true };
   }
 
   if (!config.catalogToken) {
@@ -169,8 +185,10 @@ export const createOrUpdateCatalogPullRequest = async (
 
   if (changedFiles.length === 0) {
     console.error('[eventcatalog:catalog-pr] No EventCatalog changes found; skipping catalog pull request.');
-    return { changedFiles: [], skipped: true };
+    return { changedFiles: [], changes: [], skipped: true };
   }
+
+  const changes = describeCatalogChanges(await getCatalogFileChanges(catalogPath));
 
   const branchName = getCatalogBranchName(config);
   const commitMessage = config.github
@@ -189,7 +207,7 @@ export const createOrUpdateCatalogPullRequest = async (
   const octokit = new Octokit({ auth: config.catalogToken });
   const { owner, repo } = catalogRepository;
   const title = input.result.prTitle || commitMessage;
-  const body = formatCatalogPullRequestBody(config, changedFiles, input.result);
+  const body = formatCatalogPullRequestBody(config, changes, input);
   const head = `${owner}:${branchName}`;
   const { data: existingPullRequests } = await octokit.rest.pulls.list({
     owner,
@@ -212,7 +230,7 @@ export const createOrUpdateCatalogPullRequest = async (
     });
 
     console.error(`[eventcatalog:catalog-pr] Updated catalog pull request: ${data.html_url}`);
-    return { changedFiles, commitSha, pullRequestUrl: data.html_url, skipped: false };
+    return { changedFiles, changes, commitSha, pullRequestUrl: data.html_url, skipped: false };
   }
 
   const { data } = await octokit.rest.pulls.create({
@@ -225,5 +243,40 @@ export const createOrUpdateCatalogPullRequest = async (
   });
 
   console.error(`[eventcatalog:catalog-pr] Created catalog pull request: ${data.html_url}`);
-  return { changedFiles, commitSha, pullRequestUrl: data.html_url, skipped: false };
+  return { changedFiles, changes, commitSha, pullRequestUrl: data.html_url, skipped: false };
+};
+
+/** How the agent's catalog pull requests have fared: the signal for whether its work gets merged. */
+export interface AgentPullRequestStats {
+  open: number;
+  merged30d: number;
+  closedUnmerged30d: number;
+}
+
+/**
+ * Counts the agent's pull requests in the catalog repository (recognised by branch name) among the
+ * 100 most recently updated. Reads only pull request states and dates, nothing about their content.
+ */
+export const getAgentPullRequestStats = async (config: ReviewConfig): Promise<AgentPullRequestStats | undefined> => {
+  const catalogRepository = parseRepository(config.catalogRepo);
+  if (!catalogRepository || !config.catalogToken) return undefined;
+
+  const octokit = new Octokit({ auth: config.catalogToken });
+  const { data } = await octokit.rest.pulls.list({
+    ...catalogRepository,
+    state: 'all',
+    sort: 'updated',
+    direction: 'desc',
+    per_page: 100,
+  });
+
+  const since = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const recent = (date: string | null) => Boolean(date && Date.parse(date) >= since);
+  const agentPullRequests = data.filter((pullRequest) => pullRequest.head.ref.startsWith(CATALOG_BRANCH_PREFIX));
+
+  return {
+    open: agentPullRequests.filter((pullRequest) => pullRequest.state === 'open').length,
+    merged30d: agentPullRequests.filter((pullRequest) => recent(pullRequest.merged_at)).length,
+    closedUnmerged30d: agentPullRequests.filter((pullRequest) => !pullRequest.merged_at && recent(pullRequest.closed_at)).length,
+  };
 };

@@ -10,7 +10,13 @@ inputs:
     required: false
     default: main
   catalog-token:
-    description: Optional token used to check out the EventCatalog repository. Defaults to github.token.
+    description: Optional token used to check out the EventCatalog repository and open documentation pull requests. Defaults to github.token. Ignored when github-app-client-id is set.
+    required: false
+  github-app-client-id:
+    description: Optional Client ID of a GitHub App installed on the catalog repository. When set with github-app-private-key, the agent uses a short-lived token from the App instead of catalog-token, and catalog pull requests are opened by the App's bot account.
+    required: false
+  github-app-private-key:
+    description: Private key of the GitHub App set in github-app-client-id. Pass it from a secret.
     required: false
   catalog-url:
     description: Optional URL of your hosted EventCatalog. When provided, breaking-changes comments link affected resources and owners to the catalog.
@@ -43,12 +49,33 @@ runs:
       with:
         node-version: 24
 
+    - name: Resolve catalog repository
+      id: catalog
+      shell: bash
+      env:
+        CATALOG_REPO: ${{ inputs.catalog-repo }}
+      run: |
+        echo "owner=${CATALOG_REPO%%/*}" >> "$GITHUB_OUTPUT"
+        echo "name=${CATALOG_REPO#*/}" >> "$GITHUB_OUTPUT"
+
+    # A short-lived token scoped to the catalog repository, so pull requests come from the App's bot
+    # account rather than a person, and no personal token has to be stored.
+    - name: Create GitHub App token
+      id: app-token
+      if: inputs.github-app-client-id != ''
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.github-app-client-id }}
+        private-key: ${{ inputs.github-app-private-key }}
+        owner: ${{ steps.catalog.outputs.owner }}
+        repositories: ${{ steps.catalog.outputs.name }}
+
     - name: Checkout EventCatalog
       uses: actions/checkout@v7
       with:
         repository: ${{ inputs.catalog-repo }}
         ref: ${{ inputs.catalog-ref }}
-        token: ${{ inputs.catalog-token || github.token }}
+        token: ${{ steps.app-token.outputs.token || inputs.catalog-token || github.token }}
         path: eventcatalog
 
     - name: Install action dependencies
@@ -65,7 +92,7 @@ runs:
         EVENTCATALOG_CATALOG_REF: ${{ inputs.catalog-ref }}
         EVENTCATALOG_CATALOG_REPO: ${{ inputs.catalog-repo }}
         EVENTCATALOG_CATALOG_PATH: eventcatalog
-        EVENTCATALOG_CATALOG_TOKEN: ${{ inputs.catalog-token || github.token }}
+        EVENTCATALOG_CATALOG_TOKEN: ${{ steps.app-token.outputs.token || inputs.catalog-token || github.token }}
         EVENTCATALOG_CATALOG_URL: ${{ inputs.catalog-url }}
         EVENTCATALOG_GITHUB_REPOSITORY: ${{ github.repository }}
         EVENTCATALOG_GITHUB_TOKEN: ${{ github.token }}

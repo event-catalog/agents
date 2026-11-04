@@ -70,16 +70,33 @@ catalog change detection explicit in code.
   (Flue's `SKILL.md` imports need its Vite build, which neither the action nor the evals run).
 - `scripts/sync-skill.sh` — replaces the vendored skill with the latest upstream copy.
 - `src/tools/dump-catalog.ts` — deterministic tool returning the EventCatalog SDK catalog dump.
-- `src/tools/linter.ts` — deterministic tool that lints the catalog after changes.
+- `src/tools/linter.ts` — deterministic tool that lints the catalog after changes, with the linter
+  version the catalog pins (or a pinned default), never an unpinned latest.
+- `src/tools/fitness-check.ts` — deterministic tool that runs the catalog's fitness functions
+  (`fitness/*.fitness.ts`) in a child process and reports only the problems the agent introduced
+  (compared with the catalog at `HEAD`).
+- `src/utils/child-process-env.ts` — the minimal environment for child processes that run catalog
+  code or npm packages (no provider keys or GitHub tokens), and the catalog's pinned tool versions.
 - `src/utils/eventcatalog-utils.ts` — catalog path resolution and catalog checkout inspection.
 - `src/utils/diff.ts` — changed-file discovery and ignore-path filtering.
 - `src/utils/schema-detection.ts` — pure helper: which changed files are message schemas (Breaking
   Changes).
-- `src/utils/impact-plan.ts` — detects catalog changes made outside the approved impact plan.
+- `src/utils/impact-plan.ts` — detects catalog changes made outside the approved impact plan. Edits to
+  fitness functions are always outside it.
+- `src/utils/version-pins.ts` — adds the services, agents, and domains that pin a planned message's
+  current version to the plan, so a version bump can update them without being blocked as off-plan.
+- `src/utils/archive-versions.ts` — after the off-plan check, archives the previous version of any
+  resource whose `version` changed to `versioned/<version>/`.
+- `src/utils/catalog-changes.ts` — lists changed catalog files and groups them by resource, for the
+  source PR comment and the catalog PR body.
 - `src/utils/github/catalog-pr.ts` — catalog repo preflight, git commit/push, and catalog PR
   create/update logic.
 - `src/utils/github/reporter.ts` — source PR comment create/update logic (one self-updating comment
-  per agent: Code-to-Docs summary and Breaking Changes report use separate markers).
+  per agent: Code-to-Docs summary and Breaking Changes report use separate markers). The Code-to-Docs
+  comment is a `ReviewComment` (`catalog-updated`, `no-changes`, `off-plan`, `not-run`), formatted
+  from the run's deterministic results, not from model prose about the source PR.
+- `src/utils/github/format.ts` — markdown shared by the comments and the catalog PR body (the
+  resource-changes table, "worth checking" notes from the plan, heading nesting).
 - `src/utils/analytics.ts` — anonymous PostHog usage analytics (one event per run, per agent).
 - `src/review-output.ts` — Valibot schemas for the structured agent responses (impact plan + apply
   result; breaking-change score + schema consumers).
@@ -101,14 +118,17 @@ The `pr-review` workflow does the following:
 5. **Plan**: run the read-only documentation-plan prompt. The agent decides whether the diff requires
    catalog changes and, if so, the exact set of approved target resources. If no changes are required,
    the workflow stops and reports that.
-6. **Apply**: run the apply prompt. The agent updates the catalog for the approved targets only,
-   using the EventCatalog skill and the `linter` tool.
-7. Detect any catalog changes made **outside** the approved plan; if found, skip the catalog PR and
+6. Add the resources that pin a planned message's current exact version to the plan
+   (`withVersionPinTargets`), so a version bump can update them.
+7. **Apply**: run the apply prompt. The agent updates the catalog for the approved targets only,
+   using the EventCatalog skill and the `linter` and `fitness_check` tools.
+8. Detect any catalog changes made **outside** the approved plan; if found, skip the catalog PR and
    report it (the agent went off-plan).
-8. Commit the catalog changes, push an `eventcatalog-actions/...` branch, and create or update a
-   catalog PR against `catalog-ref`.
-9. Create or update the source PR summary comment with the high-level summary and catalog PR link.
-10. Send one anonymous analytics event describing the run outcome (see Safety / Analytics below).
+9. Archive the previous version of anything the agent re-versioned (`archivePreviousVersions`).
+10. Commit the catalog changes, push an `eventcatalog-actions/...` branch, and create or update a
+    catalog PR against `catalog-ref`.
+11. Create or update the source PR comment with the catalog PR link and the resources that changed.
+12. Send one anonymous analytics event describing the run outcome (see Safety / Analytics below).
 
 ### Breaking Changes (`breaking-changes`)
 
@@ -130,15 +150,16 @@ operations.
 
 ## Action Contract
 
-| Input               | Default                       | Description                                                    |
-| ------------------- | ----------------------------- | -------------------------------------------------------------- |
-| `agent`             | `code-to-docs`                | Which agent to run: `code-to-docs` or `breaking-changes`.      |
-| `catalog-repo`      | _(required)_                  | `owner/repo` catalog repository.                               |
-| `catalog-ref`       | `main`                        | Target catalog branch.                                         |
-| `catalog-token`     | `github.token`                | Token used to check out, push to, and open PRs in the catalog. |
-| `model`             | `anthropic/claude-sonnet-4-6` | Model specifier ([available models](https://pi.dev/models)).   |
-| `ignore-paths`      | see `action.yml`              | Comma-separated paths/globs excluded from diff review.         |
-| `schema-extensions` | see `action.yml`              | Comma-separated extensions Breaking Changes treats as schemas. |
+| Input                                             | Default                       | Description                                                    |
+| ------------------------------------------------- | ----------------------------- | -------------------------------------------------------------- |
+| `agent`                                           | `code-to-docs`                | Which agent to run: `code-to-docs` or `breaking-changes`.      |
+| `catalog-repo`                                    | _(required)_                  | `owner/repo` catalog repository.                               |
+| `catalog-ref`                                     | `main`                        | Target catalog branch.                                         |
+| `catalog-token`                                   | `github.token`                | Token used to check out, push to, and open PRs in the catalog. |
+| `github-app-client-id` / `github-app-private-key` |                               | Optional GitHub App used instead of `catalog-token`.           |
+| `model`                                           | `anthropic/claude-sonnet-4-6` | Model specifier ([available models](https://pi.dev/models)).   |
+| `ignore-paths`                                    | see `action.yml`              | Comma-separated paths/globs excluded from diff review.         |
+| `schema-extensions`                               | see `action.yml`              | Comma-separated extensions Breaking Changes treats as schemas. |
 
 Provider keys are supplied through normal workflow env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `OPENROUTER_API_KEY`). Analytics can be disabled with `POSTHOG_KEY: ""`.
@@ -183,7 +204,10 @@ Agents are synchronous functions composed with hooks (`useModel`, `useSandbox`, 
 - Do not broaden GitHub Action permissions without a concrete reason.
 - Treat source PR comments and model output as untrusted data; validate or schema-check anything used
   by deterministic code.
-- Analytics must stay anonymous: report only run outcome, model, duration, and repository — never the
-  contents of a user's repository (file counts, paths, diffs, or source).
+- Analytics must stay anonymous: report only run outcome, error category (`classifyError`), model,
+  duration, repository, and counts of the agent's own catalog PRs by state — never the contents of a
+  user's repository (file counts, paths, diffs, source, or error messages).
+- Fitness functions and npm tools are catalog or third-party code: run them only through
+  `childProcessEnv()`, never in-process, and never let the agent write them.
 - Be careful with path handling in composite actions: `$GITHUB_ACTION_PATH` is the action package,
   while `$GITHUB_WORKSPACE` is the source repository checkout.
