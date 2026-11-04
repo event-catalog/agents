@@ -34,17 +34,22 @@ catalog change detection explicit in code.
 ## Project Structure
 
 - `action.yml` — composite GitHub Action. Sets up pnpm and Node 24, checks out the configured catalog
-  repo into `eventcatalog/`, installs dependencies into `$GITHUB_ACTION_PATH`, then maps the `agent`
-  input to its workflow (`code-to-docs` → `pr-review`, `breaking-changes` → `breaking-changes`) and
-  runs `pnpm exec flue run <workflow> --root "$GITHUB_ACTION_PATH" --target node`.
-- `flue.config.ts` — Flue config for the Node target.
+  repo into `eventcatalog/`, installs dependencies into `$GITHUB_ACTION_PATH`, then runs
+  `pnpm exec tsx src/run.ts <agent> --payload <json>`.
+- `src/run.ts` — the entry point. Maps the `agent` input to its workflow (`code-to-docs` →
+  `pr-review`, `breaking-changes` → `breaking-changes`), boots the Flue runtime in-process with
+  `start()`, runs the workflow, prints the result, and exits non-zero on failure.
 - `src/workflows/pr-review.ts` — the Code-to-Docs workflow orchestrating PR review and catalog update.
 - `src/workflows/breaking-changes.ts` — the Breaking Changes workflow: detect schema changes, score
   them, trace consumers, and comment back. Read-only.
-- `src/agents/code-to-docs.ts` — Flue agent: model selection, sandbox setup, EventCatalog skill
-  registration, and `dump_catalog` / `linter` tool wiring.
-- `src/agents/breaking-changes.ts` — read-only Flue agent for the Breaking Changes workflow
+- `src/agents/code-to-docs.ts` — the `CodeToDocs` Flue agent function: model selection, sandbox
+  setup, EventCatalog skill, and `dump_catalog` / `linter` tool wiring, via Flue agent hooks.
+- `src/agents/breaking-changes.ts` — the read-only `BreakingChanges` Flue agent function
   (`dump_catalog` only, no linter; contract-focused instructions).
+- `src/agents/structured-results.ts` — how workflows get schema-checked results from an agent: each
+  step gets a `submit_<name>` tool (validated input, recorded via `useDataWriter`, ends the turn),
+  `promptForResult` sends a step and reads the result back, and `initWithData` opens a conversation
+  seeded with the review payload.
 - `src/prompts/` — the agent prompts run by the workflows:
   - `create-documentation-plan-from-code-changes.ts` — Code-to-Docs read-only impact-planning pass.
   - `apply-documentation-plan-to-catalog.ts` — Code-to-Docs: applies the approved plan to the catalog.
@@ -52,6 +57,8 @@ catalog change detection explicit in code.
   - `find-schema-consumers.ts` — Breaking Changes: traces a breaking schema to its catalog consumers.
 - `src/skills/eventcatalog-documentation/` — local Agent Skill (`SKILL.md` + `references/`) telling
   the agent how to generate EventCatalog resources correctly.
+- `src/skills/load-skill.ts` — loads that skill at runtime with `defineSkill` (Flue's `SKILL.md`
+  imports need its Vite build, which neither the action nor the evals run).
 - `src/tools/dump-catalog.ts` — deterministic tool returning the EventCatalog SDK catalog dump.
 - `src/tools/linter.ts` — deterministic tool that lints the catalog after changes.
 - `src/utils/eventcatalog-utils.ts` — catalog path resolution and catalog checkout inspection.
@@ -75,7 +82,7 @@ catalog change detection explicit in code.
 
 The `pr-review` workflow does the following:
 
-1. Resolve config from the Flue payload and GitHub Action environment variables.
+1. Resolve config from the `--payload` JSON and GitHub Action environment variables.
 2. Inspect the checked-out catalog directory and exit early with a source PR comment if it is missing
    or invalid.
 3. Preflight the catalog repository and target branch with the catalog token before doing model work.
@@ -134,19 +141,26 @@ This project uses **pnpm**. Flue requires Node.js `>=22.19.0`; CI uses Node 24.
 - Build + typecheck + evals: `pnpm test`
 - Build TypeScript only: `pnpm run build`
 - Format check: `pnpm run format:check`
-- Run the workflow locally:
+- Run an agent locally (`code-to-docs` or `breaking-changes`):
 
 ```sh
-pnpm exec flue run pr-review --root . --target node --payload '{"workspace":"/tmp/example"}'
+pnpm exec tsx src/run.ts code-to-docs --payload '{"workspace":"/tmp/example"}'
 ```
+
+Flue 2 has no workflow primitive: `src/workflows/*` are plain TypeScript that drive the agents through
+`init()` handles, so they need a running runtime (`start()` in `src/run.ts` or the eval harness).
+Agents are synchronous functions composed with hooks (`useModel`, `useSandbox`, `useSkill`,
+`useTool`); they read the review payload with `useInitialData()`. Flue's own docs ship in
+`node_modules/@flue/runtime/docs/`.
 
 ## Coding Style
 
 - TypeScript strict mode, ESM (`"type": "module"`).
 - Use the `@/*` path alias for absolute imports from the project root.
 - Prefer small pure helper modules for deterministic behavior.
-- Keep model-backed behavior inside Flue workflows, agents, tools, and Agent Skills.
-- Use structured (schema-checked) model results when TypeScript code depends on exact fields.
+- Keep model-backed behavior inside Flue agents, tools, and Agent Skills.
+- Use structured (schema-checked) model results when TypeScript code depends on exact fields:
+  define them with `defineStructuredResult` and read them with `promptForResult`.
 - Match existing EventCatalog skill guidance before creating or updating catalog files.
 - Avoid broad refactors while the action contract is still settling.
 

@@ -1,5 +1,6 @@
-import type { FlueSession } from '@flue/runtime';
-import { breakingChangeResponse, type BreakingChangeResponse } from '@/src/review-output';
+import type { AgentInstanceHandle } from '@flue/runtime';
+import { promptForResult } from '@/src/agents/structured-results';
+import { breakingChangeResult, type BreakingChangeResponse } from '@/src/review-output';
 import type { ChangedFile } from '@/src/review-types';
 
 /**
@@ -35,12 +36,8 @@ Return a structured result for THIS file:
 
 /** Scores a single changed schema file for breaking changes. Does not edit files. */
 export const detectBreakingSchemaChange = async (
-  session: FlueSession,
+  agent: AgentInstanceHandle,
   schemaFile: ChangedFile
 ): Promise<BreakingChangeResponse> => {
-  const response = await session.prompt(buildDetectBreakingSchemaChangePrompt(schemaFile), {
-    result: breakingChangeResponse,
-  });
-
-  return response.data;
+  return promptForResult(agent, buildDetectBreakingSchemaChangePrompt(schemaFile), breakingChangeResult);
 };

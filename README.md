@@ -220,9 +220,8 @@ pnpm test
 # Run only the evals (see evals/README.md)
 pnpm run evals
 
-# Run an agent locally against a checked-out workspace
-# (pr-review = Code-to-Docs, breaking-changes = Breaking Changes)
-pnpm exec flue run pr-review --root . --target node --payload '{"workspace":"/tmp/example"}'
+# Run an agent locally against a checked-out workspace (code-to-docs or breaking-changes)
+pnpm exec tsx src/run.ts code-to-docs --payload '{"workspace":"/tmp/example"}'
 ```
 
 See [`AGENTS.md`](AGENTS.md) for the project layout and contributor guidelines, and

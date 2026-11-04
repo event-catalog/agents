@@ -1,4 +1,5 @@
 import * as v from 'valibot';
+import { defineStructuredResult } from '@/src/agents/structured-results';
 
 /**
  * Controlled vocabulary for `sourceChanges[].type`. A fixed enum (rather than free text) keeps the
@@ -164,6 +165,34 @@ export const schemaConsumersResponse = v.object({
       'Catalog resources that consume or implement this schema and may be affected by the breaking change. Empty when none are found.'
     )
   ),
+});
+
+/** Code-to-Docs plan step: the read-only impact plan. */
+export const impactPlanResult = defineStructuredResult({
+  name: 'impact_plan',
+  schema: impactPlanResponse,
+  description: 'Submit the EventCatalog documentation impact plan for this pull request. Ends the planning step.',
+});
+
+/** Code-to-Docs apply step: catalog PR title/summary after editing the approved targets. */
+export const applyResult = defineStructuredResult({
+  name: 'apply_result',
+  schema: promptResponse,
+  description: 'Submit the catalog pull request title and summaries after applying the approved plan. Ends the apply step.',
+});
+
+/** Breaking Changes detect step: the breaking-change score for one schema. */
+export const breakingChangeResult = defineStructuredResult({
+  name: 'breaking_change',
+  schema: breakingChangeResponse,
+  description: 'Submit the breaking-change assessment for the schema file under review. Ends the detect step.',
+});
+
+/** Breaking Changes trace step: the catalog consumers of a breaking schema. */
+export const schemaConsumersResult = defineStructuredResult({
+  name: 'schema_consumers',
+  schema: schemaConsumersResponse,
+  description: 'Submit the catalog consumers affected by the breaking schema change. Ends the trace step.',
 });
 
 export type ImpactPlanResponse = v.InferOutput<typeof impactPlanResponse>;

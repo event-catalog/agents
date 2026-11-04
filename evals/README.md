@@ -68,7 +68,7 @@ wrote.
 | `../src/prompts/*.ts`                 | **Single source of truth** for each agent step — the prompt _and_ its run function together. `code-to-docs`: `create-documentation-plan-from-code-changes.ts`, `apply-documentation-plan-to-catalog.ts`. `breaking-changes`: `detect-breaking-schema-changes.ts`, `find-schema-consumers.ts`. Both these harnesses and the production workflows (`src/workflows/`) call them, so the evals test the same prompts that run in prod. |
 | `support/scorers.ts`                  | Deterministic, model-free scoring of a `code-to-docs` impact plan (required/forbidden targets, drift).                                                                                                                                                                                                                                                                                                                             |
 | `support/breaking-changes-scorers.ts` | Deterministic scoring for `breaking-changes`: was the change correctly flagged, and were the right consumers found (and the producer excluded).                                                                                                                                                                                                                                                                                    |
-| `support/skill-*.ts`                  | Lets the real agent (which imports `SKILL.md` via the Flue build plugin) load under plain vitest. See note below.                                                                                                                                                                                                                                                                                                                  |
+| `support/flue-runtime.ts`             | Boots the Flue runtime in-process with `start()` (once per test file), and records tool calls + token usage via `observe()`.                                                                                                                                                                                                                                                                                                       |
 | `fixtures/<name>/`                    | One scenario each: a source repo and/or an EventCatalog + a `scenario.ts` (the diff and expectations).                                                                                                                                                                                                                                                                                                                             |
 
 ## How scoring works
@@ -105,10 +105,10 @@ grading model independent from the model under test.
 3. Reference it from `breaking-changes.eval.ts` (and pin the expectation in
    `breaking-changes-scorer.eval.ts`).
 
-## Note: the skill-loader shim
+## Note: how the harness runs the agent
 
-The agent imports its skill via `import skill from './SKILL.md' with { type: 'skill' }`. That import
-attribute is resolved by Flue's build plugin, which doesn't run under vitest. `support/skill-vite-plugin.ts`
-reproduces it: it intercepts the import, builds the skill from disk with `parseSkillMarkdown`, and
-registers the packaged skill directory so the harness can hand it to `createFlueContext`. This keeps
-the eval running the **unmodified real agent** rather than a re-declared copy.
+The harnesses use only Flue's public API, the same way the action does: `start()` boots the runtime in
+the test process, `initWithData()` opens a fresh conversation per scenario seeded with the review
+payload, and the shared prompt functions in `src/prompts/` drive it. The agent loads its skill from
+disk at runtime (`src/skills/load-skill.ts`), so no Vite plugin or Flue internals are needed and the
+eval runs the **unmodified real agent**.

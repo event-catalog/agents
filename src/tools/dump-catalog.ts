@@ -1,5 +1,4 @@
 import { defineTool } from '@flue/runtime';
-import * as v from 'valibot';
 import utils from '@eventcatalog/sdk';
 
 type CatalogResource = {
@@ -118,8 +117,7 @@ export const createDumpCatalogTool = (catalogPath: string) =>
   defineTool({
     name: 'dump_catalog',
     description: 'Dump a compact index of EventCatalog resources with IDs, names, versions, summaries, and paths',
-    parameters: v.object({}),
-    execute: async (_, signal?) => {
+    run: async () => {
       if (!catalogPath) {
         throw new Error('Catalog path is not defined. Please provide a valid catalog path.');
       }
@@ -128,6 +126,6 @@ export const createDumpCatalogTool = (catalogPath: string) =>
       const catalog = await dumpCatalog({ includeMarkdown: false });
       const index = createCatalogIndex(catalog);
 
-      return JSON.stringify(index);
+      return { output: index };
     },
   });

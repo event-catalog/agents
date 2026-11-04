@@ -1,7 +1,8 @@
-import { expect } from 'vitest';
+import { afterAll, expect } from 'vitest';
 import { describeEval } from 'vitest-evals';
 import { breakingChangesHarness, type BreakingChangesEvalOutput } from './support/breaking-changes-harness';
 import { shouldSkipLiveModelEval } from './support/harness';
+import { stopFlueRuntime } from './support/flue-runtime';
 import { scoreBreakingChange, scoreConsumers } from './support/breaking-changes-scorers';
 import type { BreakingChangeExpectation, ConsumersExpectation } from './support/breaking-changes-scorers';
 import { orderConfirmedBreaking, orderConfirmedAdditive } from './fixtures/breaking-change-order-confirmed/scenario';
@@ -42,6 +43,8 @@ const expectConsumers = (output: BreakingChangesEvalOutput, expectation: Consume
   expect(failures, `${failures.join('\n')}\n\nThe agent found consumers: ${found}`).toEqual([]);
   expect(score).toBe(1);
 };
+
+afterAll(stopFlueRuntime);
 
 describeEval(
   'breaking-changes agent: scoring schema changes and finding affected consumers',

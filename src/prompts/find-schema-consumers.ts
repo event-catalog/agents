@@ -1,5 +1,6 @@
-import type { FlueSession } from '@flue/runtime';
-import { schemaConsumersResponse, type BreakingChangeResponse, type SchemaConsumersResponse } from '@/src/review-output';
+import type { AgentInstanceHandle } from '@flue/runtime';
+import { promptForResult } from '@/src/agents/structured-results';
+import { schemaConsumersResult, type BreakingChangeResponse, type SchemaConsumersResponse } from '@/src/review-output';
 
 /**
  * Asks the agent to trace a breaking schema change to its consumers in the EventCatalog. The agent
@@ -33,14 +34,10 @@ If you cannot resolve the schema to a catalog resource, or it has no consumers, 
 
 /** Finds the catalog consumers of a breaking schema change. Does not edit files. */
 export const findSchemaConsumers = async (
-  session: FlueSession,
+  agent: AgentInstanceHandle,
   breakingChange: BreakingChangeResponse,
   catalogPath: string,
   catalogUrl?: string
 ): Promise<SchemaConsumersResponse> => {
-  const response = await session.prompt(buildFindSchemaConsumersPrompt(breakingChange, catalogPath, catalogUrl), {
-    result: schemaConsumersResponse,
-  });
-
-  return response.data;
+  return promptForResult(agent, buildFindSchemaConsumersPrompt(breakingChange, catalogPath, catalogUrl), schemaConsumersResult);
 };

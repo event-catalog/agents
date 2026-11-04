@@ -77,19 +77,7 @@ runs:
       run: |
         payload="$(node --input-type=module -e 'console.log(JSON.stringify({ baseSha: process.env.EVENTCATALOG_BASE_SHA || undefined, catalogPath: process.env.EVENTCATALOG_CATALOG_PATH, catalogRepo: process.env.EVENTCATALOG_CATALOG_REPO, catalogUrl: process.env.EVENTCATALOG_CATALOG_URL || undefined, headSha: process.env.EVENTCATALOG_HEAD_SHA || undefined, ignorePaths: process.env.EVENTCATALOG_IGNORE_PATHS, model: process.env.EVENTCATALOG_MODEL, schemaExtensions: process.env.EVENTCATALOG_SCHEMA_EXTENSIONS || undefined, workspace: process.env.GITHUB_WORKSPACE }))')"
 
-        # Map the requested agent to its Flue workflow. To run more than one agent, add another
+        # src/run.ts maps the requested agent to its workflow. To run more than one agent, add another
         # step (or workflow file) with a different `agent`.
         agent="$(echo "$EVENTCATALOG_AGENT" | xargs)" # trim whitespace
-        case "$agent" in
-          code-to-docs) workflow="pr-review" ;;
-          breaking-changes) workflow="breaking-changes" ;;
-          *)
-            echo "::error::Unknown EventCatalog agent '$agent'. Available: code-to-docs, breaking-changes."
-            exit 1
-            ;;
-        esac
-
-        npx flue run "$workflow" \
-          --root "$GITHUB_ACTION_PATH" \
-          --target node \
-          --payload "$payload"
+        pnpm exec tsx src/run.ts "$agent" --payload "$payload"

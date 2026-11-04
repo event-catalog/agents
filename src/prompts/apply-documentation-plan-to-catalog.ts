@@ -1,5 +1,6 @@
-import type { FlueSession } from '@flue/runtime';
-import { promptResponse, type ImpactPlanResponse, type PromptResponse } from '@/src/review-output';
+import type { AgentInstanceHandle } from '@flue/runtime';
+import { promptForResult } from '@/src/agents/structured-results';
+import { applyResult, type ImpactPlanResponse, type PromptResponse } from '@/src/review-output';
 import type { ChangedFile } from '@/src/review-types';
 
 /**
@@ -26,14 +27,10 @@ Use the \`dump_catalog\` tool if needed to locate existing resources. Update the
 
 /** Applies the approved plan, editing catalog files under the approved targets. */
 export const applyDocumentationPlan = async (
-  session: FlueSession,
+  agent: AgentInstanceHandle,
   impactPlan: ImpactPlanResponse,
   changedFiles: ChangedFile[],
   catalogPath: string
 ): Promise<PromptResponse> => {
-  const response = await session.prompt(buildApplyDocumentationPlanPrompt(impactPlan, changedFiles, catalogPath), {
-    result: promptResponse,
-  });
-
-  return response.data;
+  return promptForResult(agent, buildApplyDocumentationPlanPrompt(impactPlan, changedFiles, catalogPath), applyResult);
 };

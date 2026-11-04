@@ -1,14 +1,13 @@
-import { createAgent } from '@flue/runtime';
+'use agent';
+import { useInitialData, useModel, useSandbox, useSkill, useTool } from '@flue/runtime';
 import { local } from '@flue/runtime/node';
 import { type ReviewPayload, resolveConfig } from '@/src/config';
-import eventCatalogSkill from '../skills/eventcatalog-documentation/SKILL.md' with { type: 'skill' };
+import { applyResult, impactPlanResult } from '@/src/review-output';
+import { eventCatalogSkill } from '@/src/skills/load-skill';
+import { useStructuredResults } from '@/src/agents/structured-results';
 import { createDumpCatalogTool } from '@/src/tools/dump-catalog';
 import { createLinterTool } from '@/src/tools/linter';
 import { resolveCatalogPath } from '@/src/utils/eventcatalog-utils';
-// import { createReporter } from '@/src/utils/github/reporter'
-// import { type ReviewPayload, resolveReviewConfig } from '@/src/review/config'
-// import { buildInstructions } from '@/src/review/instructions'
-// import { createSuggestChangeTool } from '@/src/tools/suggest-change'
 
 const instructions = (sourcePath: string, catalogPath: string) => `
 You are an expert software engineer and technical writer with extensive experience in generating documentation from code changes. 
@@ -62,18 +61,20 @@ When you have completed the documentation, provide a summary of the changes made
 
 /**
  * The code to docs EventCatalog Agent. This agent is responsible for generating documentation from code changes in a pull request. It uses the EventCatalog model to generate documentation based on the code changes and the existing documentation in the repository.
+ *
+ * The workflow passes its `ReviewPayload` as the instance's initial data.
  */
-export default createAgent<ReviewPayload>(async ({ payload, env }) => {
-  const cfg = resolveConfig(payload, env as NodeJS.ProcessEnv);
+export function CodeToDocs() {
+  const cfg = resolveConfig(useInitialData<ReviewPayload | undefined>(), process.env);
   const catalogPath = resolveCatalogPath(cfg);
-  //   const reporter = createReporter(cfg)
 
-  return {
-    model: cfg.model,
-    sandbox: local({ cwd: cfg.workspace }),
-    cwd: cfg.workspace,
-    instructions: instructions(cfg.workspace, catalogPath),
-    skills: [eventCatalogSkill],
-    tools: [createDumpCatalogTool(catalogPath), createLinterTool(catalogPath)],
-  };
-});
+  useModel(cfg.model);
+  useSandbox(local({ cwd: cfg.workspace }));
+  useSkill(eventCatalogSkill);
+  useTool(createDumpCatalogTool(catalogPath));
+  useTool(createLinterTool(catalogPath));
+  useStructuredResults([impactPlanResult, applyResult]);
+
+  return instructions(cfg.workspace, catalogPath);
+}
+CodeToDocs.agentName = 'code-to-docs';
