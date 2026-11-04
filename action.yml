@@ -99,6 +99,8 @@ runs:
         EVENTCATALOG_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         EVENTCATALOG_IGNORE_PATHS: ${{ inputs.ignore-paths }}
         EVENTCATALOG_PR_NUMBER: ${{ github.event.pull_request.number }}
+        EVENTCATALOG_EVENT_ACTION: ${{ github.event.action }}
+        EVENTCATALOG_PR_MERGED: ${{ github.event.pull_request.merged }}
         EVENTCATALOG_AGENT: ${{ inputs.agent }}
         EVENTCATALOG_SCHEMA_EXTENSIONS: ${{ inputs.schema-extensions }}
       run: |

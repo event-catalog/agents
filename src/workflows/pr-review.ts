@@ -1,6 +1,6 @@
 import { CodeToDocs } from '@/src/agents/code-to-docs';
 import { initWithData } from '@/src/agents/structured-results';
-import { resolveConfig, type ReviewPayload } from '@/src/config';
+import { CLOSED_WITHOUT_MERGE_MESSAGE, resolveConfig, runTrigger, type ReviewPayload } from '@/src/config';
 import { createOrUpdateCatalogPullRequest, preflightCatalogPullRequestAccess } from '@/src/utils/github/catalog-pr';
 import { postPullRequestSummary } from '@/src/utils/github/reporter';
 import { applyDocumentationPlan } from '@/src/prompts/apply-documentation-plan-to-catalog';
@@ -27,16 +27,31 @@ export async function run(payload: ReviewPayload | undefined, env: NodeJS.Proces
 
   try {
     const result = await review(payload, config);
-    await trackPrReviewCompleted(config, result, { model: config.model, durationMs: Date.now() - startedAt });
+    await trackPrReviewCompleted(config, result, {
+      model: config.model,
+      durationMs: Date.now() - startedAt,
+      trigger: runTrigger(config),
+    });
     return result;
   } catch (error) {
-    await trackPrReviewError(config, error, { model: config.model, durationMs: Date.now() - startedAt });
+    await trackPrReviewError(config, error, {
+      model: config.model,
+      durationMs: Date.now() - startedAt,
+      trigger: runTrigger(config),
+    });
     throw error;
   }
 }
 
 async function review(payload: ReviewPayload | undefined, config: ReturnType<typeof resolveConfig>) {
   console.error('[eventcatalog:flue] PR review workflow started');
+
+  // A workflow that runs on merge triggers on every closed PR; a PR closed without merging has nothing
+  // to document. Skip it quietly, without a comment, in case the workflow has no `if: merged` guard.
+  if (config.pullRequestState === 'closed') {
+    console.error(`[eventcatalog:flue] ${CLOSED_WITHOUT_MERGE_MESSAGE}`);
+    return { message: CLOSED_WITHOUT_MERGE_MESSAGE, reviewed: 0, skipped: true };
+  }
 
   // First we check if the catalog exists and can be found.
   if (!(await doesCatalogExist(config))) {

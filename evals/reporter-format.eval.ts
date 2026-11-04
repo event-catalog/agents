@@ -284,7 +284,7 @@ test('a run that could not start gives the reason and the fix', () => {
 
 test('the catalog PR body links the source PR first and nests the model summary under its own heading', () => {
   const body = formatCatalogPullRequestBody(
-    { github: { owner: 'acme', repo: 'shop', prNumber: 12, token: 't' } },
+    { github: { owner: 'acme', repo: 'shop', prNumber: 12, token: 't' }, pullRequestState: 'open' },
     [{ ...changes[1], action: 'updated', archivedVersions: ['1.0.0'] }],
     {
       impactPlan: plan,
@@ -310,4 +310,17 @@ test('nestHeadings shifts headings to the requested level and leaves code alone'
   expect(nestHeadings('# A\n## B\ntext', 3)).toBe('### A\n#### B\ntext');
   expect(nestHeadings('#### Already deep', 3)).toBe('#### Already deep');
   expect(nestHeadings('no headings', 3)).toBe('no headings');
+});
+
+test('a catalog PR opened after the source PR merged says so, and does not promise updates', () => {
+  const body = formatCatalogPullRequestBody(
+    { github: { owner: 'acme', repo: 'shop', prNumber: 12, token: 't' }, pullRequestState: 'merged' },
+    changes,
+    { impactPlan: plan, result: { prTitle: 't', prSummary: 'Added the event.', sourcePrSummary: '' } }
+  );
+
+  expect(body).toContain(
+    '> Opened by [EventCatalog Agents](https://github.com/event-catalog/agents) after [acme/shop#12](https://github.com/acme/shop/pull/12) was merged.'
+  );
+  expect(body).not.toContain('pushing a new commit');
 });
