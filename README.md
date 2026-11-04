@@ -128,7 +128,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: event-catalog/agents@main
+      - uses: event-catalog/agents@v2
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
@@ -149,7 +149,7 @@ Each Action step runs a single `agent`. To run more than one, add another step i
 second workflow file):
 
 ```yaml
-- uses: event-catalog/agents@main
+- uses: event-catalog/agents@v2
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   with:
@@ -158,7 +158,7 @@ second workflow file):
     catalog-url: https://catalog.example.com
     catalog-token: ${{ secrets.EVENTCATALOG_TOKEN }}
 
-- uses: event-catalog/agents@main
+- uses: event-catalog/agents@v2
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   with:
@@ -224,7 +224,7 @@ to the catalog repository and expires after an hour.
    action instead of `catalog-token`:
 
 ```yaml
-- uses: event-catalog/agents@main
+- uses: event-catalog/agents@v2
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   with:
