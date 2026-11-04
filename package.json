@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@eventcatalog/fitness": "0.1.1",
-    "@eventcatalog/sdk": "2.24.1",
+    "@eventcatalog/sdk": "2.32.0",
     "@flue/runtime": "^2.3.0",
     "octokit": "^5.0.5",
     "posthog-node": "^4.18.0",

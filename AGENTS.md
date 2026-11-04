@@ -69,7 +69,9 @@ catalog change detection explicit in code.
   `agent-guidance.md` in front of its instructions, and names it `eventcatalog-documentation`
   (Flue's `SKILL.md` imports need its Vite build, which neither the action nor the evals run).
 - `scripts/sync-skill.sh` — replaces the vendored skill with the latest upstream copy.
-- `src/tools/dump-catalog.ts` — deterministic tool returning the EventCatalog SDK catalog dump.
+- `src/tools/dump-catalog.ts` — deterministic tool returning a compact index of the EventCatalog SDK
+  catalog dump: domains, systems (with the services and data stores they contain), services, agents,
+  messages, channels, entities, data stores, flows, and ADRs.
 - `src/tools/linter.ts` — deterministic tool that lints the catalog after changes, with the linter
   version the catalog pins (or a pinned default), never an unpinned latest.
 - `src/tools/fitness-check.ts` — deterministic tool that runs the catalog's fitness functions
