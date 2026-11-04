@@ -3,29 +3,31 @@
 ## Format
 
 **File:** `index.mdx` inside an ADR folder
-**Location:** `adrs/{adr-id}/index.mdx`
+**Location:** `adrs/{adr-id}/index.mdx`, or nested near the resource it applies to, e.g. `domains/{Domain}/systems/{System}/adrs/{adr-id}/index.mdx`
 
 ADRs are first-class, versioned EventCatalog resources for documenting significant architecture decisions and linking them to the resources they affect.
 
 ## Frontmatter Fields
 
-| Field            | Required | Description                                                                                            |
-| ---------------- | -------- | ------------------------------------------------------------------------------------------------------ |
-| `id`             | Yes      | Stable ADR identifier, typically kebab-case with a number (e.g., `adr-001-choose-event-driven-orders`) |
-| `name`           | Yes      | Human-readable title, often prefixed with the ADR number                                               |
-| `version`        | Yes      | Semver string (e.g., `1.0.0`)                                                                          |
-| `summary`        | Yes      | 1-2 sentence decision summary                                                                          |
-| `status`         | Yes      | One of `proposed`, `accepted`, `rejected`, `deprecated`, `superseded`                                  |
-| `date`           | Yes      | Decision date in `YYYY-MM-DD` format                                                                   |
-| `owners`         | No       | Team or user IDs responsible for maintaining the ADR                                                   |
-| `decisionMakers` | No       | Team or user IDs who made or approved the decision                                                     |
-| `appliesTo`      | No       | Resources impacted by the decision                                                                     |
-| `supersedes`     | No       | ADRs this ADR replaces                                                                                 |
-| `supersededBy`   | No       | ADRs that replace this ADR                                                                             |
-| `amends`         | No       | ADRs this ADR partially changes                                                                        |
-| `amendedBy`      | No       | ADRs that partially change this ADR                                                                    |
-| `related`        | No       | Related ADRs                                                                                           |
-| `badges`         | No       | Array of badge objects                                                                                 |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Stable ADR identifier, typically kebab-case with a number (e.g., `adr-001-choose-event-driven-orders`) |
+| `name` | Yes | Human-readable title, often prefixed with the ADR number |
+| `version` | Yes | Semver string (e.g., `1.0.0`) |
+| `summary` | Yes | 1-2 sentence decision summary |
+| `status` | Yes | One of `proposed`, `accepted`, `rejected`, `deprecated`, `superseded` |
+| `date` | Yes | Decision date in `YYYY-MM-DD` format |
+| `owners` | No | Team or user IDs responsible for maintaining the ADR |
+| `decisionMakers` | No | Team or user IDs who made or approved the decision |
+| `appliesTo` | No | Resources impacted by the decision |
+| `supersedes` | No | ADRs this ADR replaces |
+| `supersededBy` | No | ADRs that replace this ADR |
+| `amends` | No | ADRs this ADR partially changes |
+| `amendedBy` | No | ADRs that partially change this ADR |
+| `related` | No | Related ADRs |
+| `badges` | No | Array of badge objects |
+
+Relationship fields (`supersedes`, `supersededBy`, `amends`, `amendedBy`, `related`) take `{ id, version? }`; `version` defaults to `latest`. Unknown frontmatter keys fail the build; put custom metadata in keys starting with `x-`.
 
 ## Applies To Types
 
@@ -39,6 +41,7 @@ The `appliesTo` field supports these resource types:
 - `flow`
 - `channel`
 - `domain`
+- `system`
 - `user`
 - `team`
 - `container`
@@ -53,7 +56,7 @@ Each item requires `type` and `id`; `version` is optional and defaults to `lates
 ```mdx
 ---
 id: adr-001-choose-event-driven-orders
-name: 'ADR-001: Choose event-driven order processing'
+name: "ADR-001: Choose event-driven order processing"
 version: 1.0.0
 summary: Orders are processed through domain events so payment, inventory, and shipping can evolve independently.
 status: accepted
@@ -65,6 +68,8 @@ decisionMakers:
 appliesTo:
   - type: domain
     id: Orders
+  - type: system
+    id: checkout-system
   - type: service
     id: OrdersService
   - type: event
@@ -92,8 +97,8 @@ Teams can add or change downstream processing without changing the order service
 
 ```mdx
 ---
-id: adr-004-reserve-inventory-before-payment
-name: 'ADR-004: Authorize payment before reserving inventory'
+id: adr-002-authorize-payment-before-inventory
+name: "ADR-002: Authorize payment before reserving inventory"
 version: 1.0.0
 summary: The first checkout design authorized payment before inventory reservation.
 status: superseded
@@ -111,7 +116,6 @@ appliesTo:
     id: InventoryService
 supersededBy:
   - id: adr-004-reserve-inventory-before-payment
-    version: 2.0.0
 ---
 
 ## Context
@@ -135,4 +139,6 @@ The approach produced poor customer outcomes when stock was exhausted after paym
 - Use `deprecated` when a decision is no longer recommended but not directly replaced.
 - Prefer `Context`, `Decision`, and `Consequences` headings in the body.
 - Link affected resources with `appliesTo` so ADRs appear on related resource pages.
-- Keep ADR IDs stable across versions.
+- Add `<ADRTable />` to a domain, system or service page to list the ADRs that apply to it (`status="accepted,proposed"` filters, `limit` sets the page size).
+- ADRs that mainly describe a system boundary, persistence model, integration pattern, or ownership model can live under that system's `adrs/` folder and should include `type: system` in `appliesTo`.
+- Keep ADR IDs stable across versions. A replacement decision is usually a new ADR with its own `id`. If you revise the same ADR instead, move the old version to `adrs/{adr-id}/versioned/{version}/index.mdx`.

@@ -44,6 +44,10 @@ catalog change detection explicit in code.
   them, trace consumers, and comment back. Read-only.
 - `src/agents/code-to-docs.ts` — the `CodeToDocs` Flue agent function: model selection, sandbox
   setup, EventCatalog skill, and `dump_catalog` / `linter` tool wiring, via Flue agent hooks.
+- `src/agents/code-to-docs-pr-review.md` — Code-to-Docs' pull-request review workflow and
+  PR-to-catalog mapping rules (e.g. a new database becomes a container, a Kafka topic a channel, an
+  OpenAPI file is copied next to its service). Loaded into the agent's instructions rather than the
+  skill so the planning step always has them.
 - `src/agents/breaking-changes.ts` — the read-only `BreakingChanges` Flue agent function
   (`dump_catalog` only, no linter; contract-focused instructions).
 - `src/agents/structured-results.ts` — how workflows get schema-checked results from an agent: each
@@ -55,10 +59,16 @@ catalog change detection explicit in code.
   - `apply-documentation-plan-to-catalog.ts` — Code-to-Docs: applies the approved plan to the catalog.
   - `detect-breaking-schema-changes.ts` — Breaking Changes: scores one schema diff.
   - `find-schema-consumers.ts` — Breaking Changes: traces a breaking schema to its catalog consumers.
-- `src/skills/eventcatalog-documentation/` — local Agent Skill (`SKILL.md` + `references/`) telling
-  the agent how to generate EventCatalog resources correctly.
-- `src/skills/load-skill.ts` — loads that skill at runtime with `defineSkill` (Flue's `SKILL.md`
-  imports need its Vite build, which neither the action nor the evals run).
+- `src/skills/vendor/catalog-documentation-creator/` — EventCatalog's own documentation skill
+  (`SKILL.md` + `references/`), copied unchanged from
+  [event-catalog/skills](https://github.com/event-catalog/skills). Do not edit it here; update it
+  with `pnpm run skills:sync` (see `src/skills/vendor/README.md`).
+- `src/skills/agent-guidance.md` — how both agents use that interactive skill unattended (no user to
+  ask, no scaffolding, no MCP server). Edit this, not the vendored copy.
+- `src/skills/load-skill.ts` — loads the vendored skill at runtime with `defineSkill`, places
+  `agent-guidance.md` in front of its instructions, and names it `eventcatalog-documentation`
+  (Flue's `SKILL.md` imports need its Vite build, which neither the action nor the evals run).
+- `scripts/sync-skill.sh` — replaces the vendored skill with the latest upstream copy.
 - `src/tools/dump-catalog.ts` — deterministic tool returning the EventCatalog SDK catalog dump.
 - `src/tools/linter.ts` — deterministic tool that lints the catalog after changes.
 - `src/utils/eventcatalog-utils.ts` — catalog path resolution and catalog checkout inspection.

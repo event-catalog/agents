@@ -1,4 +1,6 @@
 'use agent';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { useInitialData, useModel, useSandbox, useSkill, useTool } from '@flue/runtime';
 import { local } from '@flue/runtime/node';
 import { type ReviewPayload, resolveConfig } from '@/src/config';
@@ -8,6 +10,9 @@ import { useStructuredResults } from '@/src/agents/structured-results';
 import { createDumpCatalogTool } from '@/src/tools/dump-catalog';
 import { createLinterTool } from '@/src/tools/linter';
 import { resolveCatalogPath } from '@/src/utils/eventcatalog-utils';
+
+/** PR-to-catalog rules. Part of the instructions (not the skill) so the planning step always has them. */
+const prReviewWorkflow = readFileSync(join(import.meta.dirname, 'code-to-docs-pr-review.md'), 'utf8');
 
 const instructions = (sourcePath: string, catalogPath: string) => `
 You are an expert software engineer and technical writer with extensive experience in generating documentation from code changes. 
@@ -57,6 +62,7 @@ This workflow has two phases:
 // Finish
 When you have completed the documentation, provide a summary of the changes made and any additional context that may be helpful for the reader.
 
+${prReviewWorkflow}
 `;
 
 /**

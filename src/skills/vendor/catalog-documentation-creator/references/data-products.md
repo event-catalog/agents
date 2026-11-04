@@ -9,18 +9,18 @@ Data products document curated data outputs such as analytics marts, reporting d
 
 ## Frontmatter Fields
 
-| Field          | Required | Description                                                                                         |
-| -------------- | -------- | --------------------------------------------------------------------------------------------------- |
-| `id`           | Yes      | Unique identifier, often kebab-case (e.g., `order-analytics`)                                       |
-| `name`         | Yes      | Human-readable name                                                                                 |
-| `version`      | Yes      | Semver string (e.g., `1.0.0`)                                                                       |
-| `summary`      | Yes      | 1-2 sentence description of the data product                                                        |
-| `owners`       | Yes      | Array of team or user IDs                                                                           |
-| `inputs`       | No       | Upstream resources consumed by the data product                                                     |
-| `outputs`      | No       | Downstream resources, messages, containers, or contracts produced by the data product               |
-| `badges`       | No       | Array of badge objects                                                                              |
-| `repository`   | No       | Object with `language` and `url`                                                                    |
-| `detailsPanel` | No       | Visibility toggles for domains, inputs, outputs, versions, repository, owners, changelog, and flows |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Unique identifier, often kebab-case (e.g., `order-analytics`) |
+| `name` | Yes | Human-readable name |
+| `version` | Yes | Semver string (e.g., `1.0.0`) |
+| `summary` | Yes | 1-2 sentence description of the data product |
+| `owners` | Yes | Array of team or user IDs |
+| `inputs` | No | Upstream resources consumed by the data product |
+| `outputs` | No | Downstream resources, messages, containers, or contracts produced by the data product |
+| `badges` | No | Array of badge objects |
+| `repository` | No | Object with `language` and `url` |
+| `detailsPanel` | No | Visibility toggles for domains, inputs, outputs, versions, repository, owners, changelog, and flows |
 
 ## Inputs and Outputs
 
@@ -101,10 +101,10 @@ CREATE TABLE fact_orders (
 
 ## SLAs
 
-| Metric         | Target       |
-| -------------- | ------------ |
+| Metric | Target |
+|--------|--------|
 | Data Freshness | < 15 minutes |
-| Availability   | 99.9%        |
+| Availability | 99.9% |
 
 ## Access Patterns
 

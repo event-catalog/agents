@@ -3,35 +3,35 @@
 ## Format
 
 **File:** `index.mdx` inside a service folder
-**Location:** `services/{ServiceName}/index.mdx` or `domains/{Domain}/services/{ServiceName}/index.mdx`
+**Location:** `services/{ServiceName}/index.mdx`, `domains/{Domain}/services/{ServiceName}/index.mdx`, `systems/{System}/services/{ServiceName}/index.mdx`, or `domains/{Domain}/systems/{System}/services/{ServiceName}/index.mdx`
 
 ## Frontmatter Fields
 
-| Field            | Required | Description                                                     |
-| ---------------- | -------- | --------------------------------------------------------------- |
-| `id`             | Yes      | Unique identifier, typically PascalCase (e.g., `OrdersService`) |
-| `name`           | Yes      | Human-readable name                                             |
-| `version`        | Yes      | Semver string (e.g., `0.0.1`)                                   |
-| `summary`        | Yes      | 1-2 sentence description of the service                         |
-| `owners`         | Yes      | Array of team or user IDs                                       |
-| `sends`          | No       | Array of messages this service produces                         |
-| `receives`       | No       | Array of messages this service consumes                         |
-| `repository`     | No       | Object with `language` and `url`                                |
-| `schemaPath`     | No       | Path to OpenAPI/AsyncAPI spec file                              |
-| `specifications` | No       | Array of spec objects with `type`, `path`, `name`               |
-| `writesTo`       | No       | Array of containers/databases the service writes to             |
-| `readsFrom`      | No       | Array of containers/databases the service reads from            |
-| `entities`       | No       | Array of entities this service owns or exposes                  |
-| `flows`          | No       | Array of business flows this service participates in            |
-| `badges`         | No       | Array of badge objects                                          |
-| `deprecated`     | No       | Object with `date` and `message` for deprecated services        |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Unique identifier, typically PascalCase (e.g., `OrdersService`) |
+| `name` | Yes | Human-readable name |
+| `version` | Yes | Semver string (e.g., `0.0.1`) |
+| `summary` | Yes | 1-2 sentence description of the service |
+| `owners` | Yes | Array of team or user IDs |
+| `sends` | No | Array of messages this service produces |
+| `receives` | No | Array of messages this service consumes |
+| `repository` | No | Object with `language` and `url` |
+| `schemaPath` | No | Path to OpenAPI/AsyncAPI spec file |
+| `specifications` | No | Array of spec objects with `type` (`openapi`, `asyncapi`, `graphql`, or `generic`), `path`, and optional `name`. `generic` is for other contracts (WSDL, XSD, JSON/YAML) and also takes optional `icon` |
+| `writesTo` | No | Array of containers/databases the service writes to |
+| `readsFrom` | No | Array of containers/databases the service reads from |
+| `entities` | No | Array of entities this service owns or exposes |
+| `flows` | No | Array of business flows this service participates in |
+| `badges` | No | Array of badge objects |
+| `externalSystem` | No | `true` for a third-party service you integrate with but don't own (Stripe, Twilio); shown as an external system |
+| `deprecated` | No | `true`, or `{ date, message }` for deprecated services |
 
 ## Channel Routing
 
 Services can route messages through channels using `to` and `from` fields:
 
 **Sending a message TO a channel:**
-
 ```yaml
 sends:
   - id: OrderConfirmed
@@ -40,7 +40,6 @@ sends:
 ```
 
 **Receiving a message FROM a channel:**
-
 ```yaml
 receives:
   - id: OrderConfirmed
@@ -49,13 +48,39 @@ receives:
 ```
 
 **Sending to multiple channels:**
-
 ```yaml
 sends:
   - id: OrderAmended
     to:
       - id: orders-domain-eventbus
       - id: analytics-eventbus
+```
+
+## Message Options
+
+Each `sends`/`receives` entry also accepts:
+
+- `group` — messages with the same group name collapse into one node in the visualiser (useful for services with many messages)
+- `triggers` (receives only) — the events a received command produces, each `{ id, version?, condition? }`
+- `fields` — the schema fields this service actually uses from the message (shown on the message's Field Usage page)
+
+```yaml
+receives:
+  - id: CreateOrder
+    triggers:
+      - id: OrderCreated
+        condition: Order passes validation
+      - id: OrderRejected
+        condition: Order fails validation
+  - id: PaymentProcessed
+    fields:
+      - orderId
+      - amount
+sends:
+  - id: ShipmentDispatched
+    group: Shipping
+  - id: ShipmentFailed
+    group: Shipping
 ```
 
 ## Example 1: Service with Channel Routing
@@ -114,12 +139,12 @@ The Orders Service is responsible for managing customer orders within the system
 
 ### Core features
 
-| Feature               | Description                                                     |
-| --------------------- | --------------------------------------------------------------- | ----------------------- | ----------------------------- | ----------------------- |
-| Order Management      | Handles order creation, updates, and status tracking            |
-| Inventory Integration | Validates and processes inventory, receives [[event             | InventoryAdjusted]]     |
-| Payment Processing    | Integrates with payment gateways to handle payment transactions |
-| Event Publishing      | Publishes [[event                                               | OrderAmended]], [[event | OrderCancelled]], and [[event | OrderConfirmed]] events |
+| Feature | Description |
+|---------|-------------|
+| Order Management | Handles order creation, updates, and status tracking |
+| Inventory Integration | Validates and processes inventory, receives [[event|InventoryAdjusted]] |
+| Payment Processing | Integrates with payment gateways to handle payment transactions |
+| Event Publishing | Publishes [[event|OrderAmended]], [[event|OrderCancelled]], and [[event|OrderConfirmed]] events |
 
 ## Architecture diagram
 
@@ -130,7 +155,7 @@ The Orders Service is responsible for managing customer orders within the system
 
 ## Example 2: Service with Infrastructure Details
 
-````mdx
+```mdx
 ---
 id: InventoryService
 version: 0.0.2
@@ -179,11 +204,11 @@ The Inventory Service manages real-time stock levels across all warehouse locati
 
 ## Core features
 
-| Feature                  | Description                                                              |
-| ------------------------ | ------------------------------------------------------------------------ |
-| Real-time Stock Tracking | Monitors inventory levels across all warehouses in real-time             |
-| Automated Reordering     | Triggers purchase orders when stock levels fall below defined thresholds |
-| Multi-warehouse Support  | Manages inventory across multiple warehouse locations                    |
+| Feature | Description |
+|---------|-------------|
+| Real-time Stock Tracking | Monitors inventory levels across all warehouses in real-time |
+| Automated Reordering | Triggers purchase orders when stock levels fall below defined thresholds |
+| Multi-warehouse Support | Manages inventory across multiple warehouse locations |
 
 ## Architecture diagram
 
@@ -204,8 +229,6 @@ architecture-beta
     db:L -- R:server
     disk1:T -- B:server
 ```
-````
-
 ```
 
 ## Key Conventions
@@ -213,8 +236,9 @@ architecture-beta
 - Use `[[service|ServiceName]]` syntax to link to other services in the body
 - Use `[[event|EventName]]` syntax to link to events
 - Use `[[domain|DomainName]]` syntax to link to domains
+- Use `[[system|SystemName]]` syntax to link to the owning system when applicable
 - Use `[[entity|EntityName]]` syntax to link to entities
 - Include `<NodeGraph />` for architecture visualization
 - Include `<MessageTable />` to show sends/receives in a table
-- Version references in `sends`/`receives` can use semver ranges like `1.x`
-```
+- Version references in `sends`/`receives` can be exact (`1.0.0`), `latest` (the default when omitted), or semver ranges (`1.x`, `^1.0.0`, `~1.2.0`)
+- When a service belongs to a system, add it to the system's `services` frontmatter

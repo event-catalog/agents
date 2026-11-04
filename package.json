@@ -12,6 +12,7 @@
     "evals:json": "vitest run --config vitest.config.ts --reporter=json --outputFile=vitest-results.json",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "skills:sync": "bash scripts/sync-skill.sh",
     "test": "pnpm run build && pnpm run typecheck:evals && pnpm run evals"
   },
   "engines": {

@@ -6,21 +6,21 @@ EventCatalog supports documenting ubiquitous language terms per domain as a glos
 
 ## Format
 
-**File:** `ubiquitous-language.mdx` (NOT `index.mdx`)
-**Location:** Inside a domain folder: `domains/{DomainName}/ubiquitous-language.mdx`
+**File:** `ubiquitous-language.mdx` or `ubiquitous-language.md` (NOT `index.mdx`)
+**Location:** Inside a domain or subdomain folder: `domains/{DomainName}/ubiquitous-language.mdx` or `domains/{DomainName}/subdomains/{SubdomainName}/ubiquitous-language.mdx`
 
 This file uses YAML frontmatter only — the body is typically empty.
 
 ## Frontmatter Fields
 
-The frontmatter contains a single `dictionary` array:
+The frontmatter contains a `dictionary` array (and an optional top-level `editUrl`):
 
 ```yaml
 ---
 dictionary:
   - id: TermName
     name: Term Name
-    summary: 'Brief one-line description (under 125 characters)'
+    summary: "Brief one-line description (under 125 characters)"
     description: |
       Detailed explanation of the term, its business context,
       and how it's used within this domain.
@@ -30,13 +30,14 @@ dictionary:
 
 ### Term Fields
 
-| Field         | Required | Description                                                                        |
-| ------------- | -------- | ---------------------------------------------------------------------------------- |
-| `id`          | Yes      | Unique identifier for the term                                                     |
-| `name`        | Yes      | Display name                                                                       |
-| `summary`     | Yes      | Brief one-line description (under 125 characters)                                  |
-| `description` | No       | Detailed multi-line explanation in markdown                                        |
-| `icon`        | No       | Lucide icon name (from lucide.dev) — e.g., `FileText`, `Package`, `Tag`, `Receipt` |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Unique identifier for the term |
+| `name` | Yes | Display name |
+| `summary` | Recommended | Brief one-line description (under 125 characters) |
+| `description` | No | Detailed multi-line explanation in markdown |
+| `icon` | No | Lucide icon name (from lucide.dev) — e.g., `FileText`, `Package`, `Tag`, `Receipt` |
+| `editUrl` | No | Link to edit the term at its source |
 
 ## When to Generate Ubiquitous Language
 
@@ -59,7 +60,7 @@ CRITICAL: Always generate a `ubiquitous-language.mdx` file when creating a domai
 dictionary:
   - id: Purchase Order
     name: Purchase Order
-    summary: 'A document issued by a buyer to a seller indicating the types, quantities, and agreed prices for products or services.'
+    summary: "A document issued by a buyer to a seller indicating the types, quantities, and agreed prices for products or services."
     description: |
       A purchase order (PO) is a document that initiates the buying process between entities. It protects both buyer and seller by clearly documenting the transaction details. Key components include:
 
@@ -72,7 +73,7 @@ dictionary:
 
   - id: Order Line
     name: Order Line
-    summary: 'An individual item within a purchase order, representing a specific product or service being ordered.'
+    summary: "An individual item within a purchase order, representing a specific product or service being ordered."
     description: |
       Order lines are the fundamental building blocks of any purchase order. Each line represents a distinct item or service and contains critical information for order fulfillment:
 
@@ -87,7 +88,7 @@ dictionary:
 
   - id: SKU
     name: SKU
-    summary: 'Stock Keeping Unit - A unique identifier for distinct products and their variants in inventory.'
+    summary: "Stock Keeping Unit - A unique identifier for distinct products and their variants in inventory."
     description: |
       SKUs are the cornerstone of effective inventory management systems. Each SKU represents a unique combination of product attributes:
 
@@ -101,7 +102,7 @@ dictionary:
 
   - id: Fulfillment
     name: Fulfillment
-    summary: 'The process of completing an order and delivering it to the customer.'
+    summary: "The process of completing an order and delivering it to the customer."
     description: |
       Fulfillment encompasses all steps from order receipt to delivery, including:
 
@@ -115,7 +116,7 @@ dictionary:
 
   - id: Consignment
     name: Consignment
-    summary: 'A batch of goods destined for or delivered to someone.'
+    summary: "A batch of goods destined for or delivered to someone."
     description: |
       A consignment represents the physical movement of goods through the supply chain. It encompasses:
 
@@ -129,7 +130,7 @@ dictionary:
 
   - id: Invoice
     name: Invoice
-    summary: 'A document issued by a seller to a buyer, listing goods or services provided and the amount due.'
+    summary: "A document issued by a seller to a buyer, listing goods or services provided and the amount due."
     description: |
       Invoices are critical for financial transactions, serving as a request for payment. They include:
 
@@ -143,7 +144,7 @@ dictionary:
 
   - id: Return
     name: Return
-    summary: 'The process of sending back goods to the seller for a refund or exchange.'
+    summary: "The process of sending back goods to the seller for a refund or exchange."
     description: |
       Returns management is an important aspect of customer service and inventory control:
 
@@ -155,7 +156,7 @@ dictionary:
 
   - id: Inventory
     name: Inventory
-    summary: 'The complete list of items held in stock by a business.'
+    summary: "The complete list of items held in stock by a business."
     description: |
       Inventory management is crucial for balancing supply and demand:
 
@@ -176,7 +177,7 @@ dictionary:
 dictionary:
   - id: Transaction
     name: Transaction
-    summary: 'A completed exchange of funds between a buyer and seller for goods or services.'
+    summary: "A completed exchange of funds between a buyer and seller for goods or services."
     description: |
       A transaction represents the financial exchange that occurs during the payment process. Key attributes:
 
@@ -213,7 +214,7 @@ dictionary:
 
   - id: Tokenization
     name: Tokenization
-    summary: 'Replacing sensitive payment data with a non-sensitive token for secure storage and processing.'
+    summary: "Replacing sensitive payment data with a non-sensitive token for secure storage and processing."
     description: |
       Tokenization is a security practice that protects payment card data:
 
@@ -227,8 +228,8 @@ dictionary:
 
 ## Key Conventions
 
-- One `ubiquitous-language.mdx` file per domain
-- Terms automatically appear in the domain sidebar in EventCatalog
+- One `ubiquitous-language.mdx` file per domain or subdomain
+- The domain sidebar gets a "Ubiquitous Language" link to the domain's glossary page (`/docs/domains/{id}/language`)
 - Keep summaries under 125 characters
 - Use Lucide icons (browse at lucide.dev) to make terms visually distinct
 - Focus on terms that have specific meaning within the domain context — not generic programming terms

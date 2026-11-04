@@ -7,16 +7,18 @@
 
 ## Frontmatter Fields
 
-| Field        | Required | Description                                                    |
-| ------------ | -------- | -------------------------------------------------------------- |
-| `id`         | Yes      | Unique identifier, typically PascalCase (e.g., `OrderCreated`) |
-| `name`       | Yes      | Human-readable name                                            |
-| `version`    | Yes      | Semver string (e.g., `0.0.1`)                                  |
-| `summary`    | Yes      | 1-2 sentence description of when this event is triggered       |
-| `owners`     | Yes      | Array of team or user IDs                                      |
-| `schemaPath` | No       | Path to schema file (e.g., `schema.json`, `schema.avro`)       |
-| `badges`     | No       | Array of badge objects                                         |
-| `draft`      | No       | Object with `title` and `message` for draft events             |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Unique identifier, typically PascalCase (e.g., `OrderCreated`) |
+| `name` | Yes | Human-readable name |
+| `version` | Yes | Semver string (e.g., `0.0.1`) |
+| `summary` | Yes | 1-2 sentence description of when this event is triggered |
+| `owners` | Yes | Array of team or user IDs |
+| `schemaPath` | No | Path to schema file (e.g., `schema.json`, `schema.avro`) |
+| `schemas` | No | Array of schemas for multiple or named schemas: `path` (or `file`), `name`, `format`, `environments`, `default: true` for the one shown first. Use instead of `schemaPath` when there is more than one schema |
+| `badges` | No | Array of badge objects |
+| `draft` | No | `true`, or `{ title?, message }` for draft events |
+| `deprecated` | No | `true`, or `{ message, date }` to explain the deprecation |
 
 ## Schema Files
 
@@ -29,9 +31,13 @@ Schema files sit alongside the `index.mdx` file in the same folder. Supported fo
 
 Reference schemas in the body with `<Schema />` or `<SchemaViewer />` components.
 
+## Usage Examples
+
+Put example payloads in an `examples/` folder inside the message folder (e.g. `examples/basic.json`, `examples/international.json`, any text format, subfolders allowed). They appear in a **Usage Examples** tab on the schema page. No frontmatter changes are needed.
+
 ## Example 1: Event with Schema and Code Samples
 
-````mdx
+```mdx
 ---
 id: InventoryAdjusted
 name: Inventory adjusted
@@ -60,7 +66,7 @@ The `Inventory Adjusted` event is triggered whenever there is a change in the in
 
 <NodeGraph />
 
-<SchemaViewer file="schema.yml" title="JSON Schema" maxHeight="500" />
+<SchemaViewer file="schema.avro" title="Avro Schema" maxHeight="500" />
 
 ## Payload example
 
@@ -75,7 +81,6 @@ The `Inventory Adjusted` event is triggered whenever there is a change in the in
   "adjusted_by": "user123"
 }
 ```
-````
 
 ## Schema (avro)
 
@@ -126,8 +131,7 @@ for message in consumer:
     event_data = json.loads(message.value)
     print(f"Received Inventory Adjusted event: {event_data}")
 ```
-
-````
+```
 
 ## Example 2: Simple Event
 
@@ -162,7 +166,7 @@ The OrderCancelled event is published when an order is cancelled, whether by cus
   "reason": "customer_request",
   "cancelledAt": "2024-01-15T10:30:00Z"
 }
-````
+```
 
 ## Schema
 

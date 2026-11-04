@@ -7,18 +7,19 @@
 
 ## Frontmatter Fields
 
-| Field               | Required | Description                                                                            |
-| ------------------- | -------- | -------------------------------------------------------------------------------------- |
-| `id`                | Yes      | Unique identifier (e.g., `orders.{env}.events`, `inventory-domain-eventbus`)           |
-| `name`              | Yes      | Human-readable name                                                                    |
-| `version`           | Yes      | Semver string (e.g., `0.0.1`)                                                          |
-| `summary`           | Yes      | Description of the channel's purpose                                                   |
-| `owners`            | Yes      | Array of team or user IDs                                                              |
-| `address`           | No       | The actual address/topic name                                                          |
-| `protocols`         | No       | Array of protocol strings (e.g., `kafka`, `azure-servicebus`, `aws-cross-account-bus`) |
-| `deliveryGuarantee` | No       | `at-least-once`, `at-most-once`, or `exactly-once`                                     |
-| `routes`            | No       | Array of channel IDs this channel routes messages to                                   |
-| `parameters`        | No       | Object defining parameterized parts of the channel address                             |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Unique identifier (e.g., `orders.{env}.events`, `inventory-domain-eventbus`) |
+| `name` | Yes | Human-readable name |
+| `version` | Yes | Semver string (e.g., `0.0.1`) |
+| `summary` | Yes | Description of the channel's purpose |
+| `owners` | Yes | Array of team or user IDs |
+| `address` | No | The actual address/topic name |
+| `protocols` | No | Array of protocol strings (e.g., `kafka`, `azure-servicebus`, `aws-cross-account-bus`) |
+| `deliveryGuarantee` | No | `at-least-once`, `at-most-once`, or `exactly-once` |
+| `routes` | No | Array of channel pointers (`{ id, version?, parameters? }`) this channel routes messages to |
+| `parameters` | No | Object keyed by parameter name (e.g. `env`) for the `{placeholders}` in the address; each takes `enum`, `default`, `examples`, `description` |
+
 
 ## Channel Routing
 
@@ -59,9 +60,25 @@ receives:
 
 This creates the full picture: Service A → Channel → Service B
 
+Each `to`/`from` entry also accepts:
+
+- `version` — the channel version (defaults to latest)
+- `parameters` — values for a parameterised address, e.g. `{ env: prod }` for `orders.{env}.events`
+- `delivery_mode` — `push` (default), `pull`, or `push-pull`
+
+```yaml
+receives:
+  - id: OrderConfirmed
+    from:
+      - id: orders.{env}.events
+        parameters:
+          env: prod
+        delivery_mode: pull
+```
+
 ## Example 1: Channel with Routing and Parameters
 
-````mdx
+```mdx
 ---
 id: orders.{env}.events
 name: Order Events Channel
@@ -114,9 +131,7 @@ with ServiceBusClient.from_connection_string(conn_str=CONNECTION_STR) as client:
         message = ServiceBusMessage(json.dumps(order_event_data))
         sender.send_messages(message)
 ```
-````
-
-````
+```
 
 ## Example 2: Event Bus with Cross-Account Routing
 
@@ -146,7 +161,7 @@ routes:
 The cross-account event bus enables event routing between AWS accounts in the organization.
 
 <ChannelInformation />
-````
+```
 
 ## Example 3: Domain-Scoped Event Bus
 
