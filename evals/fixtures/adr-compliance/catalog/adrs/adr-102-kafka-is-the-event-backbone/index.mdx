@@ -1,0 +1,22 @@
+---
+id: adr-102-kafka-is-the-event-backbone
+name: 'ADR-102: Kafka is the event backbone'
+version: 1.0.0
+summary: Messages between services go over Kafka, and teams do not introduce other brokers.
+status: accepted
+date: 2026-01-20
+amendedBy:
+  - id: adr-010-media-jobs-use-sqs
+---
+
+## Context
+
+Each extra broker is another system to operate, secure and monitor.
+
+## Decision
+
+Messages between services must go over Kafka. Teams must not introduce other message brokers or queues.
+
+## Consequences
+
+Everyone shares one operational model. Workloads that suit a work queue need a recorded exception.

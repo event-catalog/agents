@@ -1,0 +1,22 @@
+---
+id: adr-004-enrich-products-inline
+name: 'ADR-004: Enrich products inside the Product API'
+version: 1.0.0
+summary: The first design ran enrichment inside the Product API request.
+status: superseded
+date: 2025-06-01
+supersededBy:
+  - id: adr-003-offload-async-work-to-worker
+---
+
+## Context
+
+There was no worker when the catalog launched.
+
+## Decision
+
+All product enrichment must run inside the Product API request. Background workers are not allowed.
+
+## Consequences
+
+Requests became slow, so this was replaced by ADR-003.

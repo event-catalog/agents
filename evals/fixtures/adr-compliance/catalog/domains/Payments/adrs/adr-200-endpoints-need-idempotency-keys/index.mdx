@@ -1,0 +1,23 @@
+---
+id: adr-200-endpoints-need-idempotency-keys
+name: 'ADR-200: Endpoints require idempotency keys'
+version: 1.0.0
+summary: Every new POST endpoint requires an Idempotency-Key header.
+status: accepted
+date: 2026-02-01
+appliesTo:
+  - type: domain
+    id: Payments
+---
+
+## Context
+
+Retried payment requests must not charge a customer twice.
+
+## Decision
+
+Every new POST endpoint must require an Idempotency-Key header and reject requests without one.
+
+## Consequences
+
+Clients must generate and store keys.

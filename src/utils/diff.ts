@@ -53,7 +53,7 @@ export const buildDiffArgs = (config: ReviewConfig): string[] => {
   return args;
 };
 
-const normalizePath = (value: string): string =>
+export const normalizePath = (value: string): string =>
   value
     .replaceAll('\\', '/')
     .replace(/^\.\/+/, '')
@@ -137,6 +137,30 @@ export const parseDiff = (rawDiff: string, workspace: string): ParsedDiffFile[] 
   }
 
   return files;
+};
+
+/**
+ * A `-U0` diff with each changed line labelled with its line number in the new file, so the agent can
+ * cite lines without working them out from hunk headers. A removed line is labelled with the line it
+ * was removed at, which is the number `parseDiff` records for that hunk.
+ */
+export const formatNumberedDiff = (diff: string): string => {
+  let nextLine: number | undefined;
+
+  return diff
+    .split('\n')
+    .map((line) => {
+      const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (hunk) {
+        nextLine = Number.parseInt(hunk[1], 10);
+        return line;
+      }
+      if (nextLine === undefined) return line;
+      if (line.startsWith('+')) return `${nextLine++}: ${line}`;
+      if (line.startsWith('-')) return `${nextLine}: ${line}`;
+      return line;
+    })
+    .join('\n');
 };
 
 export const getChangedFiles = async (config: ReviewConfig): Promise<{ files: ChangedFile[]; rawDiff: string }> => {

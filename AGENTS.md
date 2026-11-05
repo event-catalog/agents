@@ -7,7 +7,7 @@ agent. Keep this distinction in mind when naming things and writing docs: reach 
 behavior, and "the action" only for GitHub Action mechanics (inputs, checkout, `$GITHUB_ACTION_PATH`,
 permissions).
 
-There are two agents today. Each Action invocation runs exactly one, selected by the `agent` input.
+There are three agents today. Each Action invocation runs exactly one, selected by the `agent` input.
 
 **Code-to-Docs** (`agent: code-to-docs`, workflow `pr-review`) is a PR reviewer that:
 
@@ -27,6 +27,14 @@ reviewer that:
 - comments back on the source pull request with the breaking lines and affected consumers.
 - It never edits the catalog.
 
+**ADR Compliance** (`agent: adr-compliance`, workflow `adr-compliance`) is a read-only PR reviewer that:
+
+- selects the accepted ADRs matching the required `adrs` globs,
+- triages their summaries against the diff, then reviews the changed lines against the relevant ADRs,
+- verifies each conflict's citation (a changed line, and a quote that is really in the ADR),
+- comments back on the source pull request only when there is a clear conflict or a recorded exception.
+- It never edits the catalog and never blocks a merge.
+
 Keep deterministic behavior in TypeScript. Let the agents reason about documentation and breakage,
 but keep GitHub writes, path resolution, diff parsing, token preflight, impact-plan enforcement, and
 catalog change detection explicit in code.
@@ -42,6 +50,8 @@ catalog change detection explicit in code.
 - `src/workflows/pr-review.ts` — the Code-to-Docs workflow orchestrating PR review and catalog update.
 - `src/workflows/breaking-changes.ts` — the Breaking Changes workflow: detect schema changes, score
   them, trace consumers, and comment back. Read-only.
+- `src/workflows/adr-compliance.ts` — the ADR Compliance workflow: select ADRs, triage, review, verify
+  citations, apply exceptions, and comment back. Read-only.
 - `src/agents/code-to-docs.ts` — the `CodeToDocs` Flue agent function: model selection, sandbox
   setup, EventCatalog skill, and `dump_catalog` / `linter` tool wiring, via Flue agent hooks.
 - `src/agents/code-to-docs-pr-review.md` — Code-to-Docs' pull-request review workflow and
@@ -50,6 +60,8 @@ catalog change detection explicit in code.
   skill so the planning step always has them.
 - `src/agents/breaking-changes.ts` — the read-only `BreakingChanges` Flue agent function
   (`dump_catalog` only, no linter; contract-focused instructions).
+- `src/agents/adr-compliance.ts` — the read-only `AdrCompliance` Flue agent function (`dump_catalog`
+  only, no skill; instructions set the bar for what counts as a conflict).
 - `src/agents/structured-results.ts` — how workflows get schema-checked results from an agent: each
   step gets a `submit_<name>` tool (validated input, recorded via `useDataWriter`, ends the turn),
   `promptForResult` sends a step and reads the result back, and `initWithData` opens a conversation
@@ -59,6 +71,8 @@ catalog change detection explicit in code.
   - `apply-documentation-plan-to-catalog.ts` — Code-to-Docs: applies the approved plan to the catalog.
   - `detect-breaking-schema-changes.ts` — Breaking Changes: scores one schema diff.
   - `find-schema-consumers.ts` — Breaking Changes: traces a breaking schema to its catalog consumers.
+  - `find-relevant-adrs.ts` — ADR Compliance: triages ADR summaries against the diff.
+  - `check-adr-compliance.ts` — ADR Compliance: reviews the changed lines against the full relevant ADRs.
 - `src/skills/vendor/catalog-documentation-creator/` — EventCatalog's own documentation skill
   (`SKILL.md` + `references/`), copied unchanged from
   [event-catalog/skills](https://github.com/event-catalog/skills). Do not edit it here; update it
@@ -83,6 +97,8 @@ catalog change detection explicit in code.
 - `src/utils/diff.ts` — changed-file discovery and ignore-path filtering.
 - `src/utils/schema-detection.ts` — pure helper: which changed files are message schemas (Breaking
   Changes).
+- `src/utils/adrs.ts` — ADR Compliance's deterministic parts: loading ADRs, anchored glob matching,
+  selection, citation verification, and parsing `adr-exception:` lines.
 - `src/utils/impact-plan.ts` — detects catalog changes made outside the approved impact plan. Edits to
   fitness functions are always outside it.
 - `src/utils/version-pins.ts` — adds the services, agents, and domains that pin a planned message's
@@ -94,14 +110,15 @@ catalog change detection explicit in code.
 - `src/utils/github/catalog-pr.ts` — catalog repo preflight, git commit/push, and catalog PR
   create/update logic.
 - `src/utils/github/reporter.ts` — source PR comment create/update logic (one self-updating comment
-  per agent: Code-to-Docs summary and Breaking Changes report use separate markers). The Code-to-Docs
+  per agent: the Code-to-Docs summary, Breaking Changes report, and ADR Compliance report use separate
+  markers). The Code-to-Docs
   comment is a `ReviewComment` (`catalog-updated`, `no-changes`, `off-plan`, `not-run`), formatted
   from the run's deterministic results, not from model prose about the source PR.
 - `src/utils/github/format.ts` — markdown shared by the comments and the catalog PR body (the
   resource-changes table, "worth checking" notes from the plan, heading nesting).
 - `src/utils/analytics.ts` — anonymous PostHog usage analytics (one event per run, per agent).
 - `src/review-output.ts` — Valibot schemas for the structured agent responses (impact plan + apply
-  result; breaking-change score + schema consumers).
+  result; breaking-change score + schema consumers; relevant ADRs + ADR conflicts).
 - `evals/` — the eval suite that runs the real agent against fixtures. See `evals/README.md`.
 - `README.md` — user-facing action usage and setup notes.
 
@@ -146,7 +163,25 @@ The `breaking-changes` workflow is read-only and does the following:
    found, or none have catalog consumers, log it and skip the comment.
 6. Send one anonymous analytics event describing the run outcome.
 
-Both workflows can run while a pull request is open or once it merges (`pullRequestState` in
+### ADR Compliance (`adr-compliance`)
+
+The `adr-compliance` workflow is read-only and does the following:
+
+1. Resolve config. A pull request closed without merging is skipped.
+2. Fail the run if `adrs` is missing, the catalog is missing, or the globs match no ADRs, so bad
+   configuration can't look like a clean pass.
+3. Select the ADRs (`selectAdrs`): accepted ADRs matching the globs, plus accepted ADRs that amend them.
+4. Collect changed source files. Exit early if none, or if no selected ADR is accepted.
+5. **Triage**: run the read-only `find-relevant-adrs` prompt on ADR summaries and the diff. Unknown ids
+   are dropped.
+6. **Review**: run the read-only `check-adr-compliance` prompt with the full relevant ADRs.
+7. Verify each conflict's citation (`verifyConflicts`) and drop any that fail.
+8. Move conflicts with an `adr-exception:` line in the pull request description to exceptions.
+9. Post or update the comment. A clean run stays silent, unless an earlier comment needs marking as
+   resolved.
+10. Send one anonymous analytics event describing the run outcome.
+
+All workflows can run while a pull request is open or once it merges (`pullRequestState` in
 `src/config.ts`, from the event's `action` and `pull_request.merged`). A pull request closed without
 merging is skipped without a comment, so a workflow on `types: [closed]` is safe without an `if`.
 
@@ -156,16 +191,17 @@ operations.
 
 ## Action Contract
 
-| Input                                             | Default                       | Description                                                    |
-| ------------------------------------------------- | ----------------------------- | -------------------------------------------------------------- |
-| `agent`                                           | `code-to-docs`                | Which agent to run: `code-to-docs` or `breaking-changes`.      |
-| `catalog-repo`                                    | _(required)_                  | `owner/repo` catalog repository.                               |
-| `catalog-ref`                                     | `main`                        | Target catalog branch.                                         |
-| `catalog-token`                                   | `github.token`                | Token used to check out, push to, and open PRs in the catalog. |
-| `github-app-client-id` / `github-app-private-key` |                               | Optional GitHub App used instead of `catalog-token`.           |
-| `model`                                           | `anthropic/claude-sonnet-4-6` | Model specifier ([available models](https://pi.dev/models)).   |
-| `ignore-paths`                                    | see `action.yml`              | Comma-separated paths/globs excluded from diff review.         |
-| `schema-extensions`                               | see `action.yml`              | Comma-separated extensions Breaking Changes treats as schemas. |
+| Input                                             | Default                         | Description                                                                  |
+| ------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------- |
+| `agent`                                           | `code-to-docs`                  | Which agent to run: `code-to-docs`, `breaking-changes`, or `adr-compliance`. |
+| `catalog-repo`                                    | _(required)_                    | `owner/repo` catalog repository.                                             |
+| `catalog-ref`                                     | `main`                          | Target catalog branch.                                                       |
+| `catalog-token`                                   | `github.token`                  | Token used to check out, push to, and open PRs in the catalog.               |
+| `github-app-client-id` / `github-app-private-key` |                                 | Optional GitHub App used instead of `catalog-token`.                         |
+| `model`                                           | `anthropic/claude-sonnet-4-6`   | Model specifier ([available models](https://pi.dev/models)).                 |
+| `ignore-paths`                                    | see `action.yml`                | Comma-separated paths/globs excluded from diff review.                       |
+| `schema-extensions`                               | see `action.yml`                | Comma-separated extensions Breaking Changes treats as schemas.               |
+| `adrs`                                            | _(required for ADR Compliance)_ | Comma-separated catalog-root globs selecting ADRs to check against.          |
 
 Provider keys are supplied through normal workflow env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `OPENROUTER_API_KEY`). Analytics can be disabled with `POSTHOG_KEY: ""`.
@@ -178,7 +214,7 @@ This project uses **pnpm**. Flue requires Node.js `>=22.19.0`; CI uses Node 24.
 - Build + typecheck + evals: `pnpm test`
 - Build TypeScript only: `pnpm run build`
 - Format check: `pnpm run format:check`
-- Run an agent locally (`code-to-docs` or `breaking-changes`):
+- Run an agent locally (`code-to-docs`, `breaking-changes`, or `adr-compliance`):
 
 ```sh
 pnpm exec tsx src/run.ts code-to-docs --payload '{"workspace":"/tmp/example"}'

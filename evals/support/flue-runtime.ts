@@ -1,5 +1,6 @@
 import { observe, type FlueObservation } from '@flue/runtime';
 import { start, type Flue } from '@flue/runtime/node';
+import { AdrCompliance } from '@/src/agents/adr-compliance';
 import { BreakingChanges } from '@/src/agents/breaking-changes';
 import { CodeToDocs } from '@/src/agents/code-to-docs';
 
@@ -25,7 +26,7 @@ type RuntimeHolder = { [RUNTIME_KEY]?: Promise<Flue> };
  */
 export const ensureFlueRuntime = (): Promise<Flue> => {
   const holder = globalThis as RuntimeHolder;
-  holder[RUNTIME_KEY] ??= start({ agents: [CodeToDocs, BreakingChanges] });
+  holder[RUNTIME_KEY] ??= start({ agents: [CodeToDocs, BreakingChanges, AdrCompliance] });
   return holder[RUNTIME_KEY];
 };
 
