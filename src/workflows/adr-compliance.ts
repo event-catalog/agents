@@ -99,11 +99,15 @@ export async function review(payload: ReviewPayload | undefined, config: ReviewC
 
   if (changedFiles.length === 0) {
     console.error('[eventcatalog:flue] No changed files found; nothing to check');
+    // The pull request may have reverted the code an earlier comment warned about.
+    await resolveAdrComplianceSummary(config, adrs);
     return emptyResult('no_changed_files', adrs);
   }
 
   if (adrs.length === 0) {
     console.error('[eventcatalog:flue] None of the matched ADRs are accepted; nothing to check against');
+    // The ADR an earlier comment warned about may have since been superseded or rejected.
+    await resolveAdrComplianceSummary(config, adrs);
     return emptyResult('no_accepted_adrs', adrs);
   }
 
