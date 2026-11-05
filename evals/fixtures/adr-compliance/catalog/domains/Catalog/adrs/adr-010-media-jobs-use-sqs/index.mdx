@@ -1,0 +1,29 @@
+---
+id: adr-010-media-jobs-use-sqs
+name: 'ADR-010: Product media jobs use SQS'
+version: 1.0.0
+summary: Media jobs from the Product API to the Product Worker use an SQS work queue, as an exception to the Kafka backbone.
+status: accepted
+date: 2026-02-20
+amends:
+  - id: adr-102-kafka-is-the-event-backbone
+appliesTo:
+  - type: domain
+    id: Catalog
+  - type: service
+    id: product-api
+  - type: service
+    id: product-worker
+---
+
+## Context
+
+Media jobs need per-message retries and visibility timeouts, which suit a work queue better than a Kafka topic.
+
+## Decision
+
+The Product API sends media jobs to the Product Worker over the `product-media-jobs` SQS queue. This is an agreed exception to ADR-102 for media jobs only. Media jobs are work instructions, not product change events, so they are not written to the outbox.
+
+## Consequences
+
+The Catalog team operates one SQS queue. All other messages stay on Kafka.

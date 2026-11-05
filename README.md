@@ -18,6 +18,7 @@ a delivery surface, not the limit of what the agents are.
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | [**Code-to-Docs**](#code-to-docs)         | Keeps your EventCatalog documentation in sync with your code by proposing catalog updates on each PR. |
 | [**Breaking Changes**](#breaking-changes) | Detects breaking schema changes in a PR and shows which catalog consumers could be affected.          |
+| [**ADR Compliance**](#adr-compliance)     | Checks that the code in a PR follows the architecture decisions (ADRs) documented in your catalog.    |
 
 Each Action step runs **one** agent, selected with the [`agent`](#choosing-an-agent) input (default:
 `code-to-docs`). To run more than one, add another step (or workflow file) with a different `agent`.
@@ -102,6 +103,84 @@ When a pull request is opened, the Breaking Changes agent:
    that could be affected. If `catalog-url` is configured, affected consumers and owner teams link to
    your hosted catalog. If no consumers are found, it logs that and skips the comment.
 
+## ADR Compliance
+
+The **ADR Compliance** agent checks that the code a pull request changes follows the Architecture
+Decision Records in your EventCatalog. You point it at the ADRs that apply to the repository, and it
+comments on the source PR only when the code clearly conflicts with one. It is read-only and advisory:
+it never edits your catalog or blocks a merge.
+
+```mermaid
+flowchart LR
+    PR[Source pull request] --> Select[Select accepted ADRs<br/>from the adrs input]
+    Select --> Triage{Any on the<br/>same topic?}
+    Triage -- No --> Skip[Nothing to report]
+    Triage -- Yes --> Review{Clear<br/>conflict?}
+    Review -- No --> Skip
+    Review -- Yes --> Verify[Verify the citations]
+    Verify --> Comment[Comment on source PR]
+```
+
+### Choosing which ADRs to check
+
+The `adrs` input is required. It takes comma-separated globs relative to your catalog root, so a
+repository can check against org-wide decisions and those of its own domain. Add this step to the
+workflow from [Get started](#get-started):
+
+```yaml
+- uses: event-catalog/agents@v2
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  with:
+    agent: adr-compliance
+    adrs: adrs/**, domains/Orders/**
+    catalog-repo: your-org/your-catalog
+    catalog-url: https://catalog.example.com
+    catalog-token: ${{ secrets.EVENTCATALOG_TOKEN }}
+```
+
+| To check against                                 | Use                                    |
+| ------------------------------------------------ | -------------------------------------- |
+| ADRs in the top-level `adrs/` folder             | `adrs/**`                              |
+| A domain, and everything nested in it            | `domains/Orders/**`                    |
+| One service                                      | `domains/Orders/services/OrdersAPI/**` |
+| ADRs that share a naming convention              | `adrs/adr-orders-*/**`                 |
+| One ADR                                          | `adrs/adr-012-use-outbox`              |
+| Every ADR in the catalog, as a deliberate choice | `'**/adrs/**'` (YAML needs the quotes) |
+
+Only `accepted` ADRs are checked, at their latest version. If an accepted ADR amends one you selected,
+it is included too, because the decision can't be judged correctly without it. If `adrs` is missing or
+matches nothing, the run fails with an error, so a typo can't look like a clean pass.
+
+ADRs can live under any `adrs` folder in your catalog, so point the globs at wherever yours are. The
+`catalog-token` only needs read access, because this agent never writes to the catalog.
+
+### How it works
+
+1. **Selects the ADRs** matching `adrs` from your catalog.
+2. **Triages** their summaries against the diff, so only ADRs on the same topic are reviewed in full.
+3. **Reviews** the changed lines against those ADRs, reporting only clear conflicts.
+4. **Verifies each citation**: the line must be one this pull request changed, and the quoted sentence
+   must really be in the ADR. A conflict that fails this check is dropped.
+5. **Comments on the source PR** with each conflict, the sentence from the ADR, and a suggestion. The
+   comment updates on every push, and says so once the conflicts are gone. A pull request with no
+   conflicts gets no comment.
+
+### Recording an exception
+
+If a conflict is intentional, add a line with the ADR's id and your reason to the pull request
+description. The conflict is then listed as an exception in the comment, so reviewers can still see it:
+
+```text
+adr-exception: adr-003-offload-async-work-to-worker image resize takes under 5ms
+```
+
+The agent reads the description when it runs, so push a commit or re-run the workflow after adding the
+line. To re-run automatically when the description changes, add `edited` to the workflow's
+`pull_request` types.
+
+If the decision itself has changed, propose a new ADR in your catalog instead.
+
 ## Get started
 
 Run an agent on your repository in three steps.
@@ -132,7 +211,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
-          agent: code-to-docs # or: breaking-changes
+          agent: code-to-docs # or: breaking-changes, adr-compliance
           catalog-repo: your-org/your-catalog
           catalog-url: https://catalog.example.com
           catalog-token: ${{ secrets.EVENTCATALOG_TOKEN }}
@@ -172,12 +251,13 @@ second workflow file):
 ### When to run
 
 Agents can run while a pull request is open, or once it is merged. We recommend running **Code-to-Docs
-when a pull request merges**, and **Breaking Changes while it is open**:
+when a pull request merges**, and **Breaking Changes and ADR Compliance while it is open**:
 
 | Agent            | Recommended trigger                     | Why                                                                                                                          |
 | ---------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Code-to-Docs     | When merged (`types: [closed]`)         | Documents what actually shipped, runs once per pull request, and never documents abandoned work.                             |
 | Breaking Changes | While open (`opened`, `synchronize`, …) | Its job is to warn before a breaking change merges. Run after merging, the warning comes too late to act on before it ships. |
+| ADR Compliance   | While open (`opened`, `synchronize`, …) | Its job is to raise a conflict while the code can still change.                                                              |
 
 Running Code-to-Docs on open pull requests also works: the catalog pull request is ready for review
 alongside the code, and is updated on every push. It runs more often, though, and most updates to a
@@ -234,25 +314,26 @@ jobs:
 ```
 
 Use `pull_request` with `types: [closed]` rather than `push` to your main branch: the agents need the
-pull request to diff against and to comment on. If a pull request is closed without merging, both
+pull request to diff against and to comment on. If a pull request is closed without merging, the
 agents skip it without commenting.
 
 ## Configuration
 
 ### Inputs
 
-| Input                    | Required | Default                       | Description                                                                                                                                       |
-| ------------------------ | -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent`                  | No       | `code-to-docs`                | Which agent to run: `code-to-docs` or `breaking-changes`.                                                                                         |
-| `catalog-repo`           | Yes      |                               | EventCatalog repository to read/document, in `owner/repo` format.                                                                                 |
-| `catalog-ref`            | No       | `main`                        | Branch checked out from the catalog repository and targeted by documentation PRs.                                                                 |
-| `catalog-token`          | No       | `github.token`                | Token used to check out the catalog repository and open documentation pull requests. Not needed with a [GitHub App](#using-a-github-app).         |
-| `github-app-client-id`   | No       |                               | Client ID of a GitHub App installed on the catalog repository. With `github-app-private-key`, the agent uses the App instead of `catalog-token`.  |
-| `github-app-private-key` | No       |                               | Private key of that GitHub App. Pass it from a secret.                                                                                            |
-| `catalog-url`            | No       |                               | URL of your hosted EventCatalog. When set, Breaking Changes comments link affected consumers and owner teams to catalog pages.                    |
-| `model`                  | No       | `anthropic/claude-sonnet-4-6` | Model specifier for the agent. See [available models](https://pi.dev/models).                                                                     |
-| `ignore-paths`           | No       | see [action.yml](action.yml)  | Comma-separated paths or glob patterns to ignore in PR diffs.                                                                                     |
-| `schema-extensions`      | No       | see [action.yml](action.yml)  | Comma-separated file extensions the Breaking Changes agent treats as message schemas. Add others (e.g. `.js`) to match where your contracts live. |
+| Input                    | Required           | Default                       | Description                                                                                                                                                  |
+| ------------------------ | ------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `agent`                  | No                 | `code-to-docs`                | Which agent to run: `code-to-docs`, `breaking-changes`, or `adr-compliance`.                                                                                 |
+| `adrs`                   | For ADR Compliance |                               | Comma-separated globs, relative to the catalog root, selecting the ADRs to check against. See [Choosing which ADRs to check](#choosing-which-adrs-to-check). |
+| `catalog-repo`           | Yes                |                               | EventCatalog repository to read/document, in `owner/repo` format.                                                                                            |
+| `catalog-ref`            | No                 | `main`                        | Branch checked out from the catalog repository and targeted by documentation PRs.                                                                            |
+| `catalog-token`          | No                 | `github.token`                | Token used to check out the catalog repository and open documentation pull requests. Not needed with a [GitHub App](#using-a-github-app).                    |
+| `github-app-client-id`   | No                 |                               | Client ID of a GitHub App installed on the catalog repository. With `github-app-private-key`, the agent uses the App instead of `catalog-token`.             |
+| `github-app-private-key` | No                 |                               | Private key of that GitHub App. Pass it from a secret.                                                                                                       |
+| `catalog-url`            | No                 |                               | URL of your hosted EventCatalog. When set, Breaking Changes and ADR Compliance comments link to catalog pages.                                               |
+| `model`                  | No                 | `anthropic/claude-sonnet-4-6` | Model specifier for the agent. See [available models](https://pi.dev/models).                                                                                |
+| `ignore-paths`           | No                 | see [action.yml](action.yml)  | Comma-separated paths or glob patterns to ignore in PR diffs.                                                                                                |
+| `schema-extensions`      | No                 | see [action.yml](action.yml)  | Comma-separated file extensions the Breaking Changes agent treats as message schemas. Add others (e.g. `.js`) to match where your contracts live.            |
 
 The agents run on [Flue](https://flueframework.com), which supports models from many providers — see
 the full list of model specifiers at [pi.dev/models](https://pi.dev/models).
@@ -358,7 +439,7 @@ pnpm test
 # Run only the evals (see evals/README.md)
 pnpm run evals
 
-# Run an agent locally against a checked-out workspace (code-to-docs or breaking-changes)
+# Run an agent locally against a checked-out workspace (code-to-docs, breaking-changes, or adr-compliance)
 pnpm exec tsx src/run.ts code-to-docs --payload '{"workspace":"/tmp/example"}'
 ```
 

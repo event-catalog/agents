@@ -103,6 +103,17 @@ export type BreakingChangesOutcome =
   | 'closed_without_merge'
   | 'error';
 
+// The outcome of a single ADR Compliance run. Each value maps to one exit point in its workflow.
+export type AdrComplianceOutcome =
+  | 'conflicts_reported'
+  | 'only_exceptions'
+  | 'no_conflicts'
+  | 'no_relevant_adrs'
+  | 'no_accepted_adrs'
+  | 'no_changed_files'
+  | 'closed_without_merge'
+  | 'error';
+
 /** `trigger` is what started the run: an open pull request, or a merged one. */
 type RunContext = { model?: string; durationMs: number; trigger: 'pull_request' | 'merged' };
 
@@ -176,4 +187,14 @@ export function trackBreakingChangesCompleted(outcome: BreakingChangesOutcome, c
 // Record a breaking-changes run that threw before producing a result.
 export function trackBreakingChangesError(error: unknown, context: RunContext) {
   return capture('breaking_changes_completed', 'error', context, { error_type: classifyError(error) });
+}
+
+// Record a completed ADR Compliance run. Like breaking-changes, the workflow labels its own outcome.
+export function trackAdrComplianceCompleted(outcome: AdrComplianceOutcome, context: RunContext) {
+  return capture('adr_compliance_completed', outcome, context);
+}
+
+// Record an ADR Compliance run that threw before producing a result.
+export function trackAdrComplianceError(error: unknown, context: RunContext) {
+  return capture('adr_compliance_completed', 'error', context, { error_type: classifyError(error) });
 }

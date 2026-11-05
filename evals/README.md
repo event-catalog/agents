@@ -8,11 +8,13 @@ Unlike a unit test, an eval runs the **real agent** (real model, real tools, rea
 realistic fixture and scores its actual output. Change the model, the instructions, or the tools and
 re-run to see the score move.
 
-Two agents are covered today:
+Three agents are covered today:
 
 - **`code-to-docs`** — turns source-code PRs into EventCatalog documentation.
 - **`breaking-changes`** — scores a changed schema for breaking changes and traces it to the catalog
   resources that consume it.
+- **`adr-compliance`** — checks the code a pull request changes against the ADRs selected by the `adrs`
+  input, and must stay silent on clean pull requests.
 
 ## Quick start
 
@@ -61,6 +63,8 @@ wrote.
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `code-to-docs.eval.ts`                | Live eval for the `code-to-docs` agent: runs the real agent, scores the real output. Skips without a key.                                                                                                                                                                                                                                                                                                                          |
 | `breaking-changes.eval.ts`            | Live eval for the `breaking-changes` agent: scores a schema change and traces it to its consumers. Skips without a key.                                                                                                                                                                                                                                                                                                            |
+| `adr-compliance.eval.ts`              | Live eval for the `adr-compliance` agent: runs the real workflow on fixture pull requests, both violations and clean changes. Skips without a key.                                                                                                                                                                                                                                                                                 |
+| `adr-compliance-guard.eval.ts`        | Offline guard: ADR selection, anchored globs, citation checks, exceptions, the comment, and the scorer. Always runs.                                                                                                                                                                                                                                                                                                               |
 | `impact-plan-scorer.eval.ts`          | Offline guard: pins the `code-to-docs` impact-plan scorer. Always runs.                                                                                                                                                                                                                                                                                                                                                            |
 | `breaking-changes-scorer.eval.ts`     | Offline guard: pins the `breaking-changes` scorers (breaking detection + consumer tracing). Always runs.                                                                                                                                                                                                                                                                                                                           |
 | `reporter-format.eval.ts`             | Offline guard: pins the source PR comments (both agents) and the catalog PR body. Always runs.                                                                                                                                                                                                                                                                                                                                     |
@@ -72,6 +76,8 @@ wrote.
 | `support/harness.ts`                  | The `code-to-docs` engine. Copies a fixture to a temp git repo, runs the agent's two-phase loop via the **shared** review logic, captures the impact plan + applied file changes + unauthorized edits.                                                                                                                                                                                                                             |
 | `support/breaking-changes-harness.ts` | The `breaking-changes` engine. Runs the two real prompts (detect, then trace consumers) against a fixture catalog and captures the structured output.                                                                                                                                                                                                                                                                              |
 | `../src/prompts/*.ts`                 | **Single source of truth** for each agent step — the prompt _and_ its run function together. `code-to-docs`: `create-documentation-plan-from-code-changes.ts`, `apply-documentation-plan-to-catalog.ts`. `breaking-changes`: `detect-breaking-schema-changes.ts`, `find-schema-consumers.ts`. Both these harnesses and the production workflows (`src/workflows/`) call them, so the evals test the same prompts that run in prod. |
+| `support/adr-compliance-harness.ts`   | The `adr-compliance` engine. Commits a fixture, applies a scenario's edits as a second commit, and runs the real workflow on that diff.                                                                                                                                                                                                                                                                                            |
+| `support/adr-compliance-scorers.ts`   | Deterministic scoring for `adr-compliance`: every expected conflict was reported with a verified citation, and no other ADR was flagged.                                                                                                                                                                                                                                                                                           |
 | `support/scorers.ts`                  | Deterministic, model-free scoring of a `code-to-docs` impact plan (required/forbidden targets, drift).                                                                                                                                                                                                                                                                                                                             |
 | `support/breaking-changes-scorers.ts` | Deterministic scoring for `breaking-changes`: was the change correctly flagged, and were the right consumers found (and the producer excluded).                                                                                                                                                                                                                                                                                    |
 | `support/flue-runtime.ts`             | Boots the Flue runtime in-process with `start()` (once per test file), and records tool calls + token usage via `observe()`.                                                                                                                                                                                                                                                                                                       |
@@ -88,6 +94,9 @@ Scoring is **deterministic and model-free** so the bar can't drift. Each agent h
 - **`breaking-changes`** (`scoreBreakingChange`, `scoreConsumers`) — the change was correctly flagged
   as breaking or additive (with the breaking lines highlighted), and the right consumers were found
   while the producer was excluded.
+
+- **`adr-compliance`** (`scoreAdrCompliance`) — every expected conflict was reported with a citation
+  that passed verification, and no other ADR was flagged.
 
 Each scorer returns a `0..1` score and a list of failures. Add an LLM judge (e.g. `FactualityJudge`
 from `vitest-evals/judges`) on top for prose quality when you want to grade doc clarity — keep the
@@ -110,6 +119,13 @@ grading model independent from the model under test.
    `BreakingChangeExpectation` and, when tracing consumers, a `ConsumersExpectation`.
 3. Reference it from `breaking-changes.eval.ts` (and pin the expectation in
    `breaking-changes-scorer.eval.ts`).
+
+### `adr-compliance`
+
+Add a scenario to `fixtures/adr-compliance/scenario.ts`: the `edits` that make up the pull request, and
+the `conflictingAdrIds` it should report (empty for a clean pull request). Reference it from
+`adr-compliance.eval.ts`. Add clean scenarios as readily as violations, since false alarms are what
+get a reviewer ignored.
 
 ## Note: how the harness runs the agent
 

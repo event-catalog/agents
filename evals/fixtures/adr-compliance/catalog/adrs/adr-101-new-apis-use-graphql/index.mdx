@@ -1,0 +1,20 @@
+---
+id: adr-101-new-apis-use-graphql
+name: 'ADR-101: New APIs use GraphQL'
+version: 1.0.0
+summary: Proposal that every new API endpoint is exposed through GraphQL instead of REST.
+status: proposed
+date: 2026-03-02
+---
+
+## Context
+
+Clients over-fetch from REST endpoints.
+
+## Decision
+
+Every new API endpoint must be exposed through GraphQL. New REST endpoints are not allowed.
+
+## Consequences
+
+Teams need GraphQL tooling.

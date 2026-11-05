@@ -1,8 +1,10 @@
 import { parseArgs } from 'node:util';
 import { start } from '@flue/runtime/node';
+import { AdrCompliance } from '@/src/agents/adr-compliance';
 import { BreakingChanges } from '@/src/agents/breaking-changes';
 import { CodeToDocs } from '@/src/agents/code-to-docs';
 import type { ReviewPayload } from '@/src/config';
+import { run as runAdrCompliance } from '@/src/workflows/adr-compliance';
 import { run as runBreakingChanges } from '@/src/workflows/breaking-changes';
 import { run as runPrReview } from '@/src/workflows/pr-review';
 
@@ -10,12 +12,13 @@ import { run as runPrReview } from '@/src/workflows/pr-review';
 const WORKFLOWS: Record<string, (payload: ReviewPayload | undefined) => Promise<unknown>> = {
   'code-to-docs': runPrReview,
   'breaking-changes': runBreakingChanges,
+  'adr-compliance': runAdrCompliance,
 };
 
 /**
  * Runs one EventCatalog agent workflow in this process:
  *
- *   tsx src/run.ts <code-to-docs|breaking-changes> [--payload '<json>']
+ *   tsx src/run.ts <code-to-docs|breaking-changes|adr-compliance> [--payload '<json>']
  *
  * Flue 2 removed workflows, so this is a standalone script: `start()` boots the Flue runtime
  * in-process (in-memory storage; nothing outlives the run) and the workflow drives the agent
@@ -34,7 +37,7 @@ const main = async (): Promise<void> => {
   }
 
   const payload = values.payload ? (JSON.parse(values.payload) as ReviewPayload) : undefined;
-  const flue = await start({ agents: [CodeToDocs, BreakingChanges] });
+  const flue = await start({ agents: [CodeToDocs, BreakingChanges, AdrCompliance] });
 
   try {
     const result = await workflow(payload);

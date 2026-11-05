@@ -178,6 +178,40 @@ export const schemaConsumersResponse = v.object({
   ),
 });
 
+/** ADR Compliance triage: which of the selected ADRs this pull request could plausibly conflict with. */
+export const relevantAdrsResponse = v.object({
+  relevantAdrIds: v.pipe(
+    v.array(v.string()),
+    v.description('Ids of the ADRs whose decision the changed code could plausibly affect. Empty when none could.')
+  ),
+});
+
+/**
+ * ADR Compliance review: where the changed code conflicts with an ADR. Each conflict cites a changed
+ * line and quotes the ADR, and the workflow checks both before reporting it.
+ */
+export const adrComplianceResponse = v.object({
+  conflicts: v.pipe(
+    v.array(
+      v.object({
+        adrId: v.pipe(v.string(), v.description('Id of the ADR the change conflicts with.')),
+        file: v.pipe(v.string(), v.description('Path of the changed file, exactly as given in the diff.')),
+        line: v.pipe(v.number(), v.description('Line number labelled on the changed line that conflicts with the ADR.')),
+        adrQuote: v.pipe(
+          v.string(),
+          v.description('The sentence from the ADR that the change conflicts with, copied word for word from a single sentence.')
+        ),
+        explanation: v.pipe(
+          v.string(),
+          v.description('One or two sentences for the pull request author on what the changed code does and why it conflicts.')
+        ),
+        suggestion: v.pipe(v.string(), v.description('One sentence on how to change the code so it follows the ADR.')),
+      })
+    ),
+    v.description('Clear conflicts between the changed code and the ADRs. Empty when there are none, which is the usual result.')
+  ),
+});
+
 /** Code-to-Docs plan step: the read-only impact plan. */
 export const impactPlanResult = defineStructuredResult({
   name: 'impact_plan',
@@ -206,7 +240,23 @@ export const schemaConsumersResult = defineStructuredResult({
   description: 'Submit the catalog consumers affected by the breaking schema change. Ends the trace step.',
 });
 
+/** ADR Compliance triage step: the ADRs worth reviewing in full. */
+export const relevantAdrsResult = defineStructuredResult({
+  name: 'relevant_adrs',
+  schema: relevantAdrsResponse,
+  description: 'Submit the ids of the ADRs this pull request could plausibly conflict with. Ends the triage step.',
+});
+
+/** ADR Compliance review step: the conflicts between the changed code and the ADRs. */
+export const adrComplianceResult = defineStructuredResult({
+  name: 'adr_compliance',
+  schema: adrComplianceResponse,
+  description: 'Submit the conflicts between the changed code and the ADRs. Ends the review step.',
+});
+
 export type ImpactPlanResponse = v.InferOutput<typeof impactPlanResponse>;
 export type PromptResponse = v.InferOutput<typeof promptResponse>;
 export type BreakingChangeResponse = v.InferOutput<typeof breakingChangeResponse>;
 export type SchemaConsumersResponse = v.InferOutput<typeof schemaConsumersResponse>;
+export type RelevantAdrsResponse = v.InferOutput<typeof relevantAdrsResponse>;
+export type AdrConflict = v.InferOutput<typeof adrComplianceResponse>['conflicts'][number];

@@ -1,6 +1,7 @@
 import { Octokit } from 'octokit';
 import type { ReviewConfig } from '@/src/config';
-import type { BreakingChangeResponse, ImpactPlanResponse, SchemaConsumersResponse } from '@/src/review-output';
+import type { AdrConflict, BreakingChangeResponse, ImpactPlanResponse, SchemaConsumersResponse } from '@/src/review-output';
+import { stripResourceLinks, type CatalogAdr } from '@/src/utils/adrs';
 import type { ResourceChange } from '@/src/utils/catalog-changes';
 import {
   formatInlineCode,
@@ -13,6 +14,7 @@ import {
 
 const COMMENT_MARKER = '<!-- eventcatalog-actions:pr-review -->';
 const BREAKING_CHANGES_COMMENT_MARKER = '<!-- eventcatalog-actions:breaking-changes -->';
+const ADR_COMPLIANCE_COMMENT_MARKER = '<!-- eventcatalog-actions:adr-compliance -->';
 const ISSUES_URL = 'https://github.com/event-catalog/agents/issues';
 
 /** What a Code-to-Docs run did, for the comment on the source pull request. */
@@ -136,7 +138,12 @@ ${formatFooter(context)}
  * PR review and breaking-changes workflows post a single, self-updating comment this way, so reruns
  * replace their previous comment instead of stacking up new ones.
  */
-const upsertPullRequestComment = async (config: ReviewConfig, marker: string, body: string): Promise<string | undefined> => {
+const upsertPullRequestComment = async (
+  config: ReviewConfig,
+  marker: string,
+  body: string,
+  { onlyUpdateExisting = false } = {}
+): Promise<string | undefined> => {
   if (!config.github) {
     console.error('[eventcatalog:github] No GitHub PR context found; skipping pull request comment.');
     return undefined;
@@ -165,6 +172,8 @@ const upsertPullRequestComment = async (config: ReviewConfig, marker: string, bo
     console.error(`[eventcatalog:github] Updated pull request comment: ${data.html_url}`);
     return data.html_url;
   }
+
+  if (onlyUpdateExisting) return undefined;
 
   const { data } = await octokit.rest.issues.createComment({
     owner,
@@ -239,15 +248,15 @@ const getResourceRoute = (type: string): string => {
 
 const buildResourceUrl = (
   catalogUrl: string | undefined,
-  consumer: SchemaConsumersResponse['consumers'][number]
+  resource: { id: string; type: string; version: string }
 ): string | undefined => {
   const baseUrl = normalizeCatalogUrl(catalogUrl);
 
-  if (!baseUrl || !consumer.id.trim() || !consumer.type.trim()) {
+  if (!baseUrl || !resource.id.trim() || !resource.type.trim()) {
     return undefined;
   }
 
-  const segments = ['docs', getResourceRoute(consumer.type), consumer.id, consumer.version].filter((segment) => segment.trim());
+  const segments = ['docs', getResourceRoute(resource.type), resource.id, resource.version].filter((segment) => segment.trim());
   return `${baseUrl}/${segments.map(encodeUrlSegment).join('/')}`;
 };
 
@@ -354,3 +363,129 @@ export const postBreakingChangesSummary = async (
   reports: BreakingSchemaReport[]
 ): Promise<string | undefined> =>
   upsertPullRequestComment(config, BREAKING_CHANGES_COMMENT_MARKER, formatBreakingChangesComment(reports, config.catalogUrl));
+
+/** What an ADR Compliance run found, for the comment on the source pull request. */
+export interface AdrComplianceReport {
+  /** Conflicts that passed verification, without those covered by an exception. */
+  conflicts: AdrConflict[];
+  /** ADRs the author recorded an exception for, where the review found a conflict. */
+  exceptions: { adrId: string; reason: string }[];
+  /** The ADRs the run checked against. */
+  adrs: CatalogAdr[];
+}
+
+type AdrCommentContext = Pick<ReviewConfig, 'adrs' | 'catalogRef' | 'catalogRepo' | 'catalogUrl' | 'github' | 'headSha'>;
+
+/** Links to the hosted catalog when configured, otherwise to the ADR in the catalog repository. */
+const formatAdrLink = (adrId: string, adrs: CatalogAdr[], context: AdrCommentContext): string => {
+  const adr = adrs.find((candidate) => candidate.id === adrId);
+  const label = formatInlineText(adr?.name || adrId);
+  if (!adr) return label;
+
+  const url =
+    buildResourceUrl(context.catalogUrl, { id: adr.id, type: 'adr', version: adr.version }) ??
+    (context.catalogRepo
+      ? `https://github.com/${context.catalogRepo}/tree/${encodeURI(context.catalogRef)}/${encodeURI(adr.path)}`
+      : undefined);
+
+  return url ? formatMarkdownLink(label, url) : label;
+};
+
+const formatConflictLocation = (conflict: AdrConflict, context: AdrCommentContext): string => {
+  const location = formatInlineCode(`${conflict.file}:${conflict.line}`);
+  if (!context.github || !context.headSha) return location;
+
+  const { owner, repo } = context.github;
+  return `[${location}](https://github.com/${owner}/${repo}/blob/${context.headSha}/${encodeURI(conflict.file)}#L${conflict.line})`;
+};
+
+const formatAdrFooter = (adrs: CatalogAdr[], context: AdrCommentContext): string => {
+  const patterns = context.adrs.map(formatInlineCode).join(', ');
+  return `<sub>EventCatalog Agents · ADR Compliance · checked against ${plural(adrs.length, 'accepted ADR')} matching ${patterns}</sub>`;
+};
+
+export const formatAdrComplianceComment = ({ conflicts, exceptions, adrs }: AdrComplianceReport, context: AdrCommentContext) => {
+  const adrIds = [...new Set(conflicts.map((conflict) => conflict.adrId))];
+
+  const sections = adrIds.map((adrId) => {
+    const entries = conflicts
+      .filter((conflict) => conflict.adrId === adrId)
+      .map(
+        (conflict) => `${formatConflictLocation(conflict, context)}: ${formatInlineText(conflict.explanation)}
+
+> ${formatInlineText(stripResourceLinks(conflict.adrQuote))}
+
+**Suggestion:** ${formatInlineText(conflict.suggestion)}`
+      )
+      .join('\n\n');
+
+    return `#### ${formatAdrLink(adrId, adrs, context)}\n\n${entries}`;
+  });
+
+  const exceptionSection =
+    exceptions.length > 0
+      ? `**Exceptions recorded in the pull request description**\n\n${exceptions
+          .map(({ adrId, reason }) => `- ${formatAdrLink(adrId, adrs, context)}: ${formatInlineText(reason)}`)
+          .join('\n')}`
+      : '';
+
+  const heading =
+    adrIds.length > 0
+      ? `### ⚠️ Possible conflict with ${plural(adrIds.length, 'architecture decision')}`
+      : `### 📝 ${plural(exceptions.length, 'architecture decision exception')} recorded`;
+
+  const nextStep =
+    adrIds.length > 0
+      ? 'If this is intentional, add `adr-exception: <adr-id> <reason>` to the pull request description. If the decision has changed, propose a new ADR in the catalog.'
+      : '';
+
+  return `${ADR_COMPLIANCE_COMMENT_MARKER}
+${heading}
+
+${[...sections, exceptionSection, nextStep].filter(Boolean).join('\n\n')}
+
+${formatAdrFooter(adrs, context)}
+`;
+};
+
+export const formatAdrComplianceResolvedComment = (adrs: CatalogAdr[], context: AdrCommentContext): string =>
+  `${ADR_COMPLIANCE_COMMENT_MARKER}
+### ✅ No architecture decision conflicts
+
+Conflicts reported earlier on this pull request are no longer present.
+
+${formatAdrFooter(adrs, context)}
+`;
+
+/**
+ * The pull request description as it is now. Read from GitHub rather than the event, so re-running a
+ * workflow after adding an `adr-exception:` line picks it up. Exceptions are optional, so a failed read
+ * is logged rather than failing the run: the conflict is then reported without its exception.
+ */
+export const getPullRequestBody = async (config: ReviewConfig): Promise<string | undefined> => {
+  if (config.pullRequestBody !== undefined || !config.github) return config.pullRequestBody;
+
+  const { owner, repo, prNumber, token } = config.github;
+  try {
+    const { data } = await new Octokit({ auth: token }).rest.pulls.get({ owner, repo, pull_number: prNumber });
+    return data.body ?? undefined;
+  } catch (error) {
+    console.error(
+      `[eventcatalog:github] Could not read the pull request description: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return undefined;
+  }
+};
+
+/** Posts (or updates) the ADR Compliance comment. Call this when there is something to report. */
+export const postAdrComplianceSummary = async (config: ReviewConfig, report: AdrComplianceReport): Promise<string | undefined> =>
+  upsertPullRequestComment(config, ADR_COMPLIANCE_COMMENT_MARKER, formatAdrComplianceComment(report, config));
+
+/**
+ * Marks an earlier ADR Compliance comment as resolved, so a stale warning doesn't stay on the pull
+ * request. A clean run with no earlier comment stays silent.
+ */
+export const resolveAdrComplianceSummary = async (config: ReviewConfig, adrs: CatalogAdr[]): Promise<string | undefined> =>
+  upsertPullRequestComment(config, ADR_COMPLIANCE_COMMENT_MARKER, formatAdrComplianceResolvedComment(adrs, config), {
+    onlyUpdateExisting: true,
+  });

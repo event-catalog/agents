@@ -19,7 +19,7 @@ inputs:
     description: Private key of the GitHub App set in github-app-client-id. Pass it from a secret.
     required: false
   catalog-url:
-    description: Optional URL of your hosted EventCatalog. When provided, breaking-changes comments link affected resources and owners to the catalog.
+    description: Optional URL of your hosted EventCatalog. When provided, breaking-changes and adr-compliance comments link to the catalog.
     required: false
   model:
     description: 'Model specifier for the documentation agent. See available models: https://pi.dev/models'
@@ -30,9 +30,12 @@ inputs:
     required: false
     default: node_modules,dist,build,coverage,.next,.nuxt,.output,.svelte-kit,.astro,.turbo,.cache,.vite,.vercel,.netlify,out,target,bin,obj,vendor
   agent:
-    description: 'Which agent to run on each pull request. Available: code-to-docs, breaking-changes.'
+    description: 'Which agent to run on each pull request. Available: code-to-docs, breaking-changes, adr-compliance.'
     required: false
     default: code-to-docs
+  adrs:
+    description: 'Required for the adr-compliance agent. Comma-separated globs, relative to the catalog root, selecting the ADRs to check pull requests against (e.g. adrs/**, domains/Orders/**).'
+    required: false
   schema-extensions:
     description: Comma-separated file extensions the breaking-changes agent treats as message schemas. Add others (e.g. .js) to match where your contracts live.
     required: false
@@ -102,9 +105,10 @@ runs:
         EVENTCATALOG_EVENT_ACTION: ${{ github.event.action }}
         EVENTCATALOG_PR_MERGED: ${{ github.event.pull_request.merged }}
         EVENTCATALOG_AGENT: ${{ inputs.agent }}
+        EVENTCATALOG_ADRS: ${{ inputs.adrs }}
         EVENTCATALOG_SCHEMA_EXTENSIONS: ${{ inputs.schema-extensions }}
       run: |
-        payload="$(node --input-type=module -e 'console.log(JSON.stringify({ baseSha: process.env.EVENTCATALOG_BASE_SHA || undefined, catalogPath: process.env.EVENTCATALOG_CATALOG_PATH, catalogRepo: process.env.EVENTCATALOG_CATALOG_REPO, catalogUrl: process.env.EVENTCATALOG_CATALOG_URL || undefined, headSha: process.env.EVENTCATALOG_HEAD_SHA || undefined, ignorePaths: process.env.EVENTCATALOG_IGNORE_PATHS, model: process.env.EVENTCATALOG_MODEL, schemaExtensions: process.env.EVENTCATALOG_SCHEMA_EXTENSIONS || undefined, workspace: process.env.GITHUB_WORKSPACE }))')"
+        payload="$(node --input-type=module -e 'console.log(JSON.stringify({ adrs: process.env.EVENTCATALOG_ADRS || undefined, baseSha: process.env.EVENTCATALOG_BASE_SHA || undefined, catalogPath: process.env.EVENTCATALOG_CATALOG_PATH, catalogRepo: process.env.EVENTCATALOG_CATALOG_REPO, catalogUrl: process.env.EVENTCATALOG_CATALOG_URL || undefined, headSha: process.env.EVENTCATALOG_HEAD_SHA || undefined, ignorePaths: process.env.EVENTCATALOG_IGNORE_PATHS, model: process.env.EVENTCATALOG_MODEL, schemaExtensions: process.env.EVENTCATALOG_SCHEMA_EXTENSIONS || undefined, workspace: process.env.GITHUB_WORKSPACE }))')"
 
         # src/run.ts maps the requested agent to its workflow. To run more than one agent, add another
         # step (or workflow file) with a different `agent`.

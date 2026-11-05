@@ -1,6 +1,8 @@
 import { DEFAULT_SCHEMA_EXTENSIONS } from '@/src/utils/schema-detection';
 
 export interface ReviewPayload {
+  /** ADR Compliance: which ADRs to check against, as globs relative to the catalog root. */
+  adrs?: string[] | string;
   baseSha?: string;
   catalogPath?: string;
   catalogRef?: string;
@@ -13,6 +15,8 @@ export interface ReviewPayload {
   ignorePaths?: string[] | string;
   model?: string;
   prNumber?: number | string;
+  /** The pull request description. When unset, ADR Compliance reads it from GitHub. */
+  pullRequestBody?: string;
   /** `open`, `merged`, or `closed` (closed without merging). Defaults to `open`. */
   pullRequestState?: PullRequestState;
   schemaExtensions?: string[] | string;
@@ -40,6 +44,8 @@ export interface GithubReviewTarget {
 }
 
 export interface ReviewConfig {
+  /** Globs relative to the catalog root selecting the ADRs that ADR Compliance checks against. */
+  adrs: string[];
   baseSha?: string;
   catalogPath: string;
   catalogRef: string;
@@ -51,6 +57,7 @@ export interface ReviewConfig {
   headSha?: string;
   ignorePaths: string[];
   model: string;
+  pullRequestBody?: string;
   pullRequestState: PullRequestState;
   /** Extensions (e.g. `.json`, `.js`) treated as message schemas by the breaking-changes agent. */
   schemaExtensions: string[];
@@ -119,6 +126,7 @@ export const resolveConfig = (payload: ReviewPayload | undefined, env: NodeJS.Pr
   const schemaExtensions = parseCommaList(p.schemaExtensions ?? env.EVENTCATALOG_SCHEMA_EXTENSIONS);
 
   return {
+    adrs: parseCommaList(p.adrs ?? env.EVENTCATALOG_ADRS),
     baseSha: p.baseSha || env.EVENTCATALOG_BASE_SHA,
     catalogPath: p.catalogPath || env.EVENTCATALOG_CATALOG_PATH || 'eventcatalog',
     catalogRef: p.catalogRef || env.EVENTCATALOG_CATALOG_REF || 'main',
@@ -129,6 +137,7 @@ export const resolveConfig = (payload: ReviewPayload | undefined, env: NodeJS.Pr
     headSha: p.headSha || env.EVENTCATALOG_HEAD_SHA,
     ignorePaths: ignorePaths.length > 0 ? ignorePaths : DEFAULT_DIFF_IGNORE_PATHS,
     model: p.model || env.EVENTCATALOG_MODEL || env.MODEL || 'anthropic/claude-sonnet-4-6',
+    pullRequestBody: p.pullRequestBody,
     pullRequestState: parsePullRequestState(p, env),
     schemaExtensions: schemaExtensions.length > 0 ? schemaExtensions : DEFAULT_SCHEMA_EXTENSIONS,
     thinkingLevel: env.THINKING_LEVEL || 'medium',
