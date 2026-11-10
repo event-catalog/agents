@@ -8,9 +8,9 @@ domains, channels, containers, specifications, and more — and use that underst
 architecture documented and safe to change. They are powered by [Flue](https://flueframework.com) and
 guided by bundled Agent Skills.
 
-Today the agents run in your **CI/CD pipeline as a GitHub Action**: each time you open a pull request,
-the agents you've enabled review the change and report back. CI is the first place we run them; it is
-a delivery surface, not the limit of what the agents are.
+Today the agents run in your **CI/CD pipeline**, as a **GitHub Action** or in **Azure Pipelines**: each
+time you open a pull request, the agents you've enabled review the change and report back. CI is the
+first place we run them; it is a delivery surface, not the limit of what the agents are.
 
 ## Available agents
 
@@ -20,8 +20,9 @@ a delivery surface, not the limit of what the agents are.
 | [**Breaking Changes**](#breaking-changes) | Detects breaking schema changes in a PR and shows which catalog consumers could be affected.          |
 | [**ADR Compliance**](#adr-compliance)     | Checks that the code in a PR follows the architecture decisions (ADRs) documented in your catalog.    |
 
-Each Action step runs **one** agent, selected with the [`agent`](#choosing-an-agent) input (default:
-`code-to-docs`). To run more than one, add another step (or workflow file) with a different `agent`.
+Each step runs **one** agent, selected with the `agent` setting (default: `code-to-docs`). To run more
+than one, add another step with a different `agent`. Get started with
+[GitHub Actions](#github-actions) or [Azure Pipelines](#azure-pipelines).
 
 ## Code-to-Docs
 
@@ -121,11 +122,14 @@ flowchart LR
     Verify --> Comment[Comment on source PR]
 ```
 
+![ADR Compliance commenting on a GitHub pull request](docs/images/github-adr-compliance.png)
+
 ### Choosing which ADRs to check
 
-The `adrs` input is required. It takes comma-separated globs relative to your catalog root, so a
+The `adrs` setting is required. It takes comma-separated globs relative to your catalog root, so a
 repository can check against org-wide decisions and those of its own domain. Add this step to the
-workflow from [Get started](#get-started):
+workflow from [GitHub Actions](#github-actions) (in Azure Pipelines, pass the same `adrs` value as a
+[template parameter](#azure-pipelines-parameters)):
 
 ```yaml
 - uses: event-catalog/agents@v2
@@ -176,12 +180,25 @@ adr-exception: adr-003-offload-async-work-to-worker image resize takes under 5ms
 ```
 
 The agent reads the description when it runs, so push a commit or re-run the workflow after adding the
-line. To re-run automatically when the description changes, add `edited` to the workflow's
-`pull_request` types.
+line. On GitHub, to re-run automatically when the description changes, add `edited` to the workflow's
+`pull_request` types. Azure Pipelines doesn't run on description changes: re-queue the pull request's
+build validation instead.
 
 If the decision itself has changed, propose a new ADR in your catalog instead.
 
 ## Get started
+
+The agents run where your pull requests are:
+
+| Your source code is in | Run the agents with                              |
+| ---------------------- | ------------------------------------------------ |
+| GitHub                 | the [GitHub Action](#github-actions)             |
+| Azure Repos            | the [Azure Pipelines template](#azure-pipelines) |
+
+Your catalog can be in either: for example, source code in Azure Repos with the catalog on GitHub. See
+[Using a catalog on GitHub](#using-a-catalog-on-github).
+
+## GitHub Actions
 
 Run an agent on your repository in three steps.
 
@@ -317,8 +334,6 @@ Use `pull_request` with `types: [closed]` rather than `push` to your main branch
 pull request to diff against and to comment on. If a pull request is closed without merging, the
 agents skip it without commenting.
 
-## Configuration
-
 ### Inputs
 
 | Input                    | Required           | Default                       | Description                                                                                                                                                  |
@@ -341,17 +356,6 @@ the full list of model specifiers at [pi.dev/models](https://pi.dev/models).
 > **Breaking Changes only looks at schema files.** By default that means `.json`, `.yml`, `.yaml`,
 > `.avro`, `.avsc`, `.proto`, `.graphql`, and `.gql`. If your message contracts live in source files
 > (for example a `messages.js`), add that extension via `schema-extensions` so the agent inspects it.
-
-### Provider API keys
-
-The model provider's API key is passed as a normal workflow environment variable. Set the one that
-matches your `model`:
-
-| Provider   | Env var              |
-| ---------- | -------------------- |
-| Anthropic  | `ANTHROPIC_API_KEY`  |
-| OpenAI     | `OPENAI_API_KEY`     |
-| OpenRouter | `OPENROUTER_API_KEY` |
 
 ### Using a separate catalog repository
 
@@ -384,6 +388,241 @@ to the catalog repository and expires after an hour.
     github-app-private-key: ${{ secrets.EVENTCATALOG_APP_PRIVATE_KEY }}
 ```
 
+## Azure Pipelines
+
+For source code in Azure Repos, the agents run in Azure Pipelines from a steps template,
+[`azure-pipelines/eventcatalog-agents.yml`](azure-pipelines/eventcatalog-agents.yml). The agents do the
+same work as on GitHub: they comment on the pull request in a thread, and Code-to-Docs opens its
+documentation pull requests in your catalog repository. The catalog can be in Azure Repos (the default)
+or [on GitHub](#using-a-catalog-on-github).
+
+![Breaking Changes commenting on an Azure Repos pull request](docs/images/azure-devops-breaking-changes.png)
+
+Pull request runs come from a **build validation** branch policy, the usual way to run checks on Azure
+Repos pull requests (Azure Repos ignores the YAML `pr:` trigger). Code-to-Docs runs from the pipeline's
+CI trigger once a pull request merges, and finds the pull request from the merge commit.
+
+### 1. Add your model provider key
+
+In **Pipelines → Library**, create a variable group (for example `eventcatalog`) with your model
+provider key as a secret variable: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY`.
+Secret variables only reach the agent when you pass them in the template's `env` parameter, as the
+pipeline below does.
+
+### 2. Give the build service access
+
+The agents use the pipeline's own token (`System.AccessToken`), so no personal token is needed. Its
+identity is the project's build service, **`<Project> Build Service (<Organization>)`** (or **`Project
+Collection Build Service (<Organization>)`** if your pipelines aren't limited to the current project). In
+**Project settings → Repositories**, allow it:
+
+| Repository        | Permissions                                                        | For                                    |
+| ----------------- | ------------------------------------------------------------------ | -------------------------------------- |
+| Your source repo  | **Contribute to pull requests**                                    | Comments on pull requests (all agents) |
+| Your catalog repo | **Read**                                                           | Breaking Changes and ADR Compliance    |
+| Your catalog repo | **Contribute**, **Create branch**, **Contribute to pull requests** | Code-to-Docs                           |
+
+If the catalog is in a different project, also allow the build service to
+[access that project](https://learn.microsoft.com/azure/devops/pipelines/process/access-tokens#configure-permissions-for-a-project-to-access-another-project-in-the-same-project-collection),
+or use a [personal access token](#using-a-personal-access-token) instead.
+
+### 3. Add the pipeline
+
+The template is in this repository, so reference it as a repository resource. Azure Pipelines needs a
+[GitHub service connection](https://learn.microsoft.com/azure/devops/pipelines/library/service-endpoints#github-service-connection)
+to read templates from GitHub (the repository is public, so any connection works). Without one, see
+[Using the template without a GitHub connection](#using-the-template-without-a-github-connection).
+
+Add `eventcatalog-agents.yml` to your source repository, and create a pipeline from it (**Pipelines → New
+pipeline → Azure Repos Git → Existing Azure Pipelines YAML file**):
+
+```yaml
+# eventcatalog-agents.yml
+trigger:
+  branches:
+    include: [main] # Code-to-Docs runs once a pull request merges into main
+
+resources:
+  repositories:
+    - repository: eventcatalog-agents
+      type: github
+      endpoint: github # the name of your GitHub service connection
+      name: event-catalog/agents
+      ref: refs/tags/v2
+    - repository: catalog
+      type: git
+      name: Architecture/eventcatalog # your catalog: Project/Repo
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: eventcatalog # holds ANTHROPIC_API_KEY
+
+jobs:
+  # While the pull request is open (build validation).
+  - job: review
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    uses:
+      repositories: [catalog]
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      - template: azure-pipelines/eventcatalog-agents.yml@eventcatalog-agents
+        parameters:
+          agent: breaking-changes
+          catalogRepo: Architecture/eventcatalog
+          catalogUrl: https://catalog.example.com
+          env:
+            ANTHROPIC_API_KEY: $(ANTHROPIC_API_KEY)
+
+      - template: azure-pipelines/eventcatalog-agents.yml@eventcatalog-agents
+        parameters:
+          agent: adr-compliance
+          adrs: adrs/**, domains/Orders/**
+          catalogRepo: Architecture/eventcatalog
+          catalogUrl: https://catalog.example.com
+          env:
+            ANTHROPIC_API_KEY: $(ANTHROPIC_API_KEY)
+
+  # Once the pull request has merged (CI build of main).
+  - job: document
+    condition: ne(variables['Build.Reason'], 'PullRequest')
+    uses:
+      repositories: [catalog]
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      - template: azure-pipelines/eventcatalog-agents.yml@eventcatalog-agents
+        parameters:
+          agent: code-to-docs
+          catalogRepo: Architecture/eventcatalog
+          env:
+            ANTHROPIC_API_KEY: $(ANTHROPIC_API_KEY)
+```
+
+- `fetchDepth: 0` is required so the agent can diff the pull request against its target branch. New
+  pipelines fetch only the latest commit by default.
+- The `catalog` repository resource and `uses` give the job's token access to the catalog, which
+  **Protect access to repositories in YAML pipelines** requires (it is on by default). Approve the
+  pipeline's access to it on its first run.
+- Each `template` step runs one agent. Use only the agents you want, and the same
+  [recommended triggers](#when-to-run) as on GitHub apply.
+
+### 4. Add build validation
+
+In **Project settings → Repositories → your source repo → Policies**, open the `main` branch, and under
+**Build validation** add the pipeline. Set **Trigger** to _Automatic_, and **Policy requirement** to
+_Optional_: the agents are advisory, and a failure such as a model provider outage shouldn't block a
+merge.
+
+### 5. Open a pull request
+
+Breaking Changes and ADR Compliance comment on the pull request; once it merges, Code-to-Docs opens a
+documentation pull request in your catalog and comments with the link.
+
+### On Azure DevOps
+
+The agents behave as they do on GitHub, with these differences:
+
+- **Comments are threads.** Breaking Changes and ADR Compliance open an **active** thread, so reviewers
+  see it; it counts towards the _Check for comment resolution_ policy if you use one. When an ADR
+  conflict is fixed, its thread is marked **resolved**. Code-to-Docs posts its summary as a **closed**
+  thread, because there is nothing to resolve on the pull request. Each agent keeps one thread up to
+  date rather than adding new ones.
+
+  ![ADR Compliance thread on an Azure Repos pull request](docs/images/azure-devops-adr-compliance.png)
+
+- **Impact diagrams** in Breaking Changes comments show as Mermaid source: Azure DevOps renders Mermaid
+  only in wikis.
+- **Catalog pull request descriptions** are shortened to fit Azure DevOps' 4,000-character limit.
+- **Runs after a merge** find the pull request that merged from the commit (merge or squash). A commit
+  pushed straight to `main` has no pull request, so the agents skip it. Leave CI batching off
+  (`batch: true`): a batched build reviews only the last pull request it contains.
+- **Which builds run.** Pull request builds review the open pull request; CI builds and runs queued by
+  hand review the pull request that merged. Scheduled and other builds have no pull request, and are
+  skipped.
+
+### Azure Pipelines parameters
+
+| Parameter          | Required           | Default                       | Description                                                                                                                                         |
+| ------------------ | ------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent`            | No                 | `code-to-docs`                | Which agent to run: `code-to-docs`, `breaking-changes`, or `adr-compliance`.                                                                        |
+| `adrs`             | For ADR Compliance |                               | Comma-separated globs, relative to the catalog root, selecting the ADRs to check against.                                                           |
+| `catalogRepo`      | Yes                |                               | The catalog repository: `Project/Repo` (or `Repo` in the same project), or its URL. `owner/repo` for GitHub.                                        |
+| `catalogRef`       | No                 | `main`                        | Branch checked out from the catalog repository and targeted by documentation pull requests.                                                         |
+| `catalogProvider`  | No                 | `azure-devops`                | Where the catalog is hosted: `azure-devops` or `github`.                                                                                            |
+| `catalogToken`     | No                 | `$(System.AccessToken)`       | Token used to check out the catalog and open documentation pull requests.                                                                           |
+| `catalogUrl`       | No                 |                               | URL of your hosted EventCatalog. When set, Breaking Changes and ADR Compliance comments link to catalog pages.                                      |
+| `model`            | No                 | `anthropic/claude-sonnet-4-6` | Model specifier for the agent. See [available models](https://pi.dev/models).                                                                       |
+| `ignorePaths`      | No                 | see the template              | Comma-separated paths or glob patterns to ignore in pull request diffs.                                                                             |
+| `schemaExtensions` | No                 | see the template              | Comma-separated file extensions the Breaking Changes agent treats as message schemas.                                                               |
+| `workspace`        | No                 | `$(Build.SourcesDirectory)`   | The source checkout to diff. When a job checks out more than one repository, `self` moves to `$(Build.SourcesDirectory)/<repo>`: set this to match. |
+| `agentsVersion`    | No                 | `v2`                          | The EventCatalog Agents release to run. Keep it the same as the `ref` of the `eventcatalog-agents` resource.                                        |
+| `env`              | No                 | `{}`                          | Environment for the agent, such as your model provider key: `{ ANTHROPIC_API_KEY: $(ANTHROPIC_API_KEY) }`.                                          |
+
+To pin a release, set both the resource `ref` (for example `refs/tags/v2.3.0`) and `agentsVersion:
+v2.3.0`.
+
+### Using a personal access token
+
+To open catalog pull requests as a person or service account rather than the build service, create a
+personal access token with the **Code (Read & write)** scope, store it as a secret variable, and pass it
+as `catalogToken: $(EVENTCATALOG_TOKEN)`. Comments on the source pull request still come from the
+build service.
+
+### Using a catalog on GitHub
+
+With source code in Azure Repos and the catalog on GitHub, set `catalogProvider: github`, `catalogRepo`
+to `owner/repo`, and `catalogToken` to a GitHub token from a secret variable. A
+[fine-grained token](https://docs.github.com/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+scoped to the catalog repository needs **Contents** (read, and write for Code-to-Docs) and, for
+Code-to-Docs, **Pull requests: Read and write**. The `catalog` repository resource and `uses` aren't
+needed.
+
+```yaml
+- template: azure-pipelines/eventcatalog-agents.yml@eventcatalog-agents
+  parameters:
+    agent: code-to-docs
+    catalogProvider: github
+    catalogRepo: your-org/your-catalog
+    catalogToken: $(GITHUB_CATALOG_TOKEN)
+    env:
+      ANTHROPIC_API_KEY: $(ANTHROPIC_API_KEY)
+```
+
+### Using the template without a GitHub connection
+
+Copy [`azure-pipelines/eventcatalog-agents.yml`](azure-pipelines/eventcatalog-agents.yml) into your
+repository (or a shared templates repository in Azure Repos), and reference it by path, for example
+`template: templates/eventcatalog-agents.yml`. Set `agentsVersion` to the release you copied it from.
+The template still downloads the agents from GitHub when it runs, so the build agent needs internet
+access, as it does for the model provider and npm.
+
+### Azure DevOps Server
+
+The agents use Azure DevOps REST API version 6.0, which Azure DevOps Server 2020 and later support, and
+read the organization's URL from the pipeline, so they should work on Azure DevOps Server too. A full
+`catalogRepo` URL on Server must include the project
+(`https://server/tfs/Collection/Project/_git/Repo`), even when the repository is named after it. We test
+against Azure DevOps Services; if you run them on Server, please
+[let us know](https://github.com/event-catalog/agents/issues) how it goes.
+
+## Configuration
+
+### Provider API keys
+
+The model provider's API key is passed to the agent as an environment variable: in the step's `env` on
+GitHub, and in the template's `env` parameter in Azure Pipelines. Set the one that matches your `model`:
+
+| Provider   | Env var              |
+| ---------- | -------------------- |
+| Anthropic  | `ANTHROPIC_API_KEY`  |
+| OpenAI     | `OPENAI_API_KEY`     |
+| OpenRouter | `OPENROUTER_API_KEY` |
+
 ### Fitness functions
 
 [Fitness functions](https://www.eventcatalog.dev/docs) are architecture rules you write for your
@@ -392,7 +631,7 @@ catalog has them, the Code-to-Docs agent runs them after making its changes and 
 changes introduced. Problems that were already in your catalog are left alone.
 
 Fitness functions are code from your catalog repository, so the agent runs them in a separate process
-that does not receive your model provider key or GitHub tokens. The agent can never create or edit
+that does not receive your model provider key or GitHub and Azure DevOps tokens. The agent can never create or edit
 fitness functions: a run that tries is rejected as off-plan.
 
 We recommend also running the linter, your fitness functions and a build in your catalog repository's
@@ -415,15 +654,33 @@ jobs:
       - run: npx eventcatalog build
 ```
 
+In Azure Repos, add the same checks as a pipeline in your catalog repository, and make it a
+[build validation](#4-add-build-validation) on the catalog's main branch:
+
+```yaml
+# azure-pipelines.yml in your catalog repository
+trigger: none
+pool:
+  vmImage: ubuntu-latest
+steps:
+  - task: UseNode@1
+    inputs:
+      version: 24.x
+  - script: npm ci
+  - script: npx eventcatalog-linter
+  - script: npx eventcatalog fitness check
+  - script: npx eventcatalog build
+```
+
 ### Usage analytics
 
-The action sends one anonymous event per run so we can see how the agents are used. It contains the
-run's outcome (and, for a failed run, the kind of error, such as an invalid model provider key), the
-model, the run's duration, whether it ran on an open or a merged pull request, the repository name,
-and for Code-to-Docs, how many of the agent's catalog
-pull requests are open, merged, or closed without merging. It never contains anything from your
-repositories: no code, file names, paths, diffs, or pull request content. Set `POSTHOG_KEY: ""` in
-the step's `env` to turn it off.
+The agents send one anonymous event per run so we can see how they are used. It contains the run's
+outcome (and, for a failed run, the kind of error, such as an invalid model provider key), the model,
+the run's duration, whether it ran on an open or a merged pull request, the repository name, the CI
+system (GitHub Actions or Azure Pipelines), and for Code-to-Docs, how many of the agent's catalog pull
+requests are open, merged, or closed without merging. It never contains anything from your
+repositories: no code, file names, paths, diffs, or pull request content. Set `POSTHOG_KEY: ""` in the
+step's `env` (or the Azure Pipelines template's `env` parameter) to turn it off.
 
 ## Development
 
@@ -441,6 +698,9 @@ pnpm run evals
 
 # Run an agent locally against a checked-out workspace (code-to-docs, breaking-changes, or adr-compliance)
 pnpm exec tsx src/run.ts code-to-docs --payload '{"workspace":"/tmp/example"}'
+
+# Check out a catalog into <workspace>/eventcatalog, as the Azure Pipelines template does
+pnpm exec tsx src/checkout-catalog.ts --payload '{"workspace":"/tmp/example","catalogRepo":"acme/catalog","catalogToken":"..."}'
 ```
 
 See [`AGENTS.md`](AGENTS.md) for the project layout and contributor guidelines, and

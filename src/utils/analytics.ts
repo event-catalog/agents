@@ -1,7 +1,7 @@
 import { PostHog } from 'posthog-node';
-import { CLOSED_WITHOUT_MERGE_MESSAGE, type ReviewConfig } from '@/src/config';
+import { CLOSED_WITHOUT_MERGE_MESSAGE, isAzurePipelines, type ReviewConfig } from '@/src/config';
 import { MISSING_CATALOG_MESSAGE } from '@/src/utils/eventcatalog-utils';
-import { getAgentPullRequestStats } from '@/src/utils/github/catalog-pr';
+import { getAgentPullRequestStats } from '@/src/utils/pull-requests/catalog-pr';
 
 // Public Keys.
 const DEFAULT_POSTHOG_KEY = 'phc_HQZncKORYsXgO87WuSjSdKbQSTzylljE6HTtUw0fBIH';
@@ -20,6 +20,7 @@ export type PrReviewOutcome =
   | 'catalog_missing'
   | 'access_denied'
   | 'no_changed_files'
+  | 'no_pull_request'
   | 'closed_without_merge'
   | 'error';
 
@@ -44,6 +45,8 @@ type PrReviewResult = {
   message?: string;
   catalogPullRequest?: { skipped?: boolean };
   unauthorizedCatalogChanges?: unknown;
+  /** Set when the run had no pull request to review (e.g. an Azure Pipelines build of a direct push). */
+  noPullRequest?: boolean;
 };
 
 // Derive the analytics outcome from a workflow result by its structure, so the workflow body
@@ -55,6 +58,7 @@ function outcomeFromResult(result: PrReviewResult): PrReviewOutcome {
   if (result.message?.startsWith('EventCatalog agent skipped:')) return 'access_denied';
   if (result.message === 'No changed files found') return 'no_changed_files';
   if (result.message === CLOSED_WITHOUT_MERGE_MESSAGE) return 'closed_without_merge';
+  if (result.noPullRequest) return 'no_pull_request';
   return 'no_changes_required';
 }
 
@@ -86,7 +90,14 @@ export function classifyError(error: unknown): ErrorType {
   if (/rate.?limit|\b429\b|overloaded/.test(text)) return 'model_rate_limit';
   if (/structured result|did not submit|submit_|valibot|schema validation|invalid.*output/.test(text))
     return 'invalid_model_output';
-  if (status === 401 || status === 403 || status === 404 || /github|octokit|bad credentials|resource not accessible/.test(text)) {
+  // `github_access` covers the source control API either way (GitHub or Azure DevOps), so the category
+  // stays comparable across runs.
+  if (
+    status === 401 ||
+    status === 403 ||
+    status === 404 ||
+    /github|octokit|bad credentials|resource not accessible|azure devops|tf\d{6}/.test(text)
+  ) {
     return 'github_access';
   }
   if (/timed? ?out|timeout|aborterror|etimedout/.test(text)) return 'timeout';
@@ -100,6 +111,7 @@ export type BreakingChangesOutcome =
   | 'no_breaking_changes'
   | 'no_schema_changes'
   | 'no_changed_files'
+  | 'no_pull_request'
   | 'closed_without_merge'
   | 'error';
 
@@ -111,6 +123,7 @@ export type AdrComplianceOutcome =
   | 'no_relevant_adrs'
   | 'no_accepted_adrs'
   | 'no_changed_files'
+  | 'no_pull_request'
   | 'closed_without_merge'
   | 'error';
 
@@ -121,8 +134,23 @@ type RunContext = { model?: string; durationMs: number; trigger: 'pull_request' 
 // it exits or events are lost. We create the client lazily and `shutdown()` it in the same call,
 // which is the simplest correct shape for a one-shot run. Analytics must never break a run, so
 // everything is wrapped and swallowed. The only properties we ever send are the high-level outcome,
-// the error category, the model, the run duration, the trigger, the repository, and counts of the agent's own
+// the error category, the model, the run duration, the trigger, the repository, the CI system, and counts of the agent's own
 // catalog pull requests — never anything about the contents of the repo.
+/** Where the run happened: the CI system, never anything about the repository's contents. */
+const ciSystem = (): 'github-actions' | 'azure-pipelines' | 'other' =>
+  process.env.GITHUB_ACTIONS === 'true' ? 'github-actions' : isAzurePipelines(process.env) ? 'azure-pipelines' : 'other';
+
+/**
+ * The repository's name, as `owner/repo` on GitHub or `project/repo` in Azure DevOps. The Azure DevOps
+ * organization is left out on purpose, to send less that identifies the user, even though `project/repo`
+ * isn't unique across organizations.
+ */
+const repositoryName = (): string | undefined =>
+  process.env.GITHUB_REPOSITORY ||
+  (process.env.SYSTEM_TEAMPROJECT && process.env.BUILD_REPOSITORY_NAME
+    ? `${process.env.SYSTEM_TEAMPROJECT}/${process.env.BUILD_REPOSITORY_NAME}`
+    : undefined);
+
 async function capture(event: string, outcome: string, context: RunContext, extra: Record<string, unknown> = {}) {
   if (!ENABLED) return;
 
@@ -131,14 +159,15 @@ async function capture(event: string, outcome: string, context: RunContext, extr
   try {
     client.capture({
       // CI runs have no user; group by repo so runs aggregate per project.
-      distinctId: process.env.GITHUB_REPOSITORY || 'eventcatalog-action',
+      distinctId: repositoryName() || 'eventcatalog-action',
       event,
       properties: {
         outcome,
         model: context.model,
         duration_ms: context.durationMs,
         trigger: context.trigger,
-        repository: process.env.GITHUB_REPOSITORY,
+        repository: repositoryName(),
+        ci: ciSystem(),
         ...extra,
       },
     });

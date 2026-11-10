@@ -22,10 +22,22 @@ export const formatInlineText = (value: string): string => value.replace(/\s+/g,
 /** Text for a markdown table cell: one line, with pipes escaped. */
 const formatCell = (value: string): string => formatInlineText(value).replace(/\|/g, '\\|');
 
-/** `https://github.com/acme/catalog/pull/21` → `acme/catalog#21`; anything else is returned as is. */
+/**
+ * `https://github.com/acme/catalog/pull/21` → `acme/catalog#21`, and an Azure DevOps pull request
+ * (`…/Architecture/_git/catalog/pullrequest/21`) → `Architecture/catalog!21`, the way Azure DevOps refers
+ * to pull requests. Anything else is returned as is.
+ */
 export const formatPullRequestReference = (url: string): string => {
-  const match = url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
-  return match ? `${match[1]}#${match[2]}` : url;
+  const github = url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+  if (github) return `${github[1]}#${github[2]}`;
+
+  const azure = url.match(/\/([^/]+)\/_git\/([^/?#]+)\/pullrequest\/(\d+)/);
+  if (!azure) return url;
+  try {
+    return `${decodeURIComponent(azure[1])}/${decodeURIComponent(azure[2])}!${azure[3]}`;
+  } catch {
+    return url;
+  }
 };
 
 const capitalize = (value: string): string => value.charAt(0).toUpperCase() + value.slice(1);

@@ -1,0 +1,149 @@
+# EventCatalog Agents for Azure Pipelines: a steps template that runs one agent on an Azure Repos pull
+# request. The Azure Pipelines counterpart of the GitHub Action in action.yml; see the README for setup.
+#
+#   resources:
+#     repositories:
+#       - repository: eventcatalog-agents
+#         type: github
+#         endpoint: github # a GitHub service connection; the repository is public
+#         name: event-catalog/agents
+#         ref: refs/tags/v2
+#
+#   steps:
+#     - checkout: self
+#       fetchDepth: 0
+#     - template: azure-pipelines/eventcatalog-agents.yml@eventcatalog-agents
+#       parameters:
+#         agent: breaking-changes
+#         catalogRepo: Architecture/eventcatalog
+#         env:
+#           ANTHROPIC_API_KEY: $(ANTHROPIC_API_KEY)
+
+parameters:
+  # Which agent to run. To run more than one, use the template once per agent.
+  - name: agent
+    type: string
+    default: code-to-docs
+    values:
+      - code-to-docs
+      - breaking-changes
+      - adr-compliance
+
+  # The EventCatalog repository: `Project/Repo` (or just `Repo`) in this organization, or its full URL.
+  # For a catalog on GitHub, `owner/repo` with `catalogProvider: github`.
+  - name: catalogRepo
+    type: string
+
+  # Branch checked out from the catalog repository and targeted by documentation pull requests.
+  - name: catalogRef
+    type: string
+    default: main
+
+  # Where the catalog repository is hosted.
+  - name: catalogProvider
+    type: string
+    default: azure-devops
+    values:
+      - azure-devops
+      - github
+
+  # Token to check out the catalog and open documentation pull requests in it. The pipeline's own token
+  # works for a catalog in this organization once its build service has access; for a catalog on
+  # GitHub, pass a GitHub token from a secret variable.
+  - name: catalogToken
+    type: string
+    default: $(System.AccessToken)
+
+  # URL of your hosted EventCatalog. When set, Breaking Changes and ADR Compliance comments link to it.
+  - name: catalogUrl
+    type: string
+    default: ''
+
+  # Model specifier for the agent. See https://pi.dev/models
+  - name: model
+    type: string
+    default: anthropic/claude-sonnet-4-6
+
+  # Comma-separated paths or glob patterns to ignore in pull request diffs.
+  - name: ignorePaths
+    type: string
+    default: node_modules,dist,build,coverage,.next,.nuxt,.output,.svelte-kit,.astro,.turbo,.cache,.vite,.vercel,.netlify,out,target,bin,obj,vendor
+
+  # Required for adr-compliance: comma-separated globs, relative to the catalog root, selecting the ADRs.
+  - name: adrs
+    type: string
+    default: ''
+
+  # Comma-separated file extensions the breaking-changes agent treats as message schemas.
+  - name: schemaExtensions
+    type: string
+    default: .json,.yml,.yaml,.avro,.avsc,.proto,.graphql,.gql
+
+  # The source repository checkout the agent diffs. Change it when the job checks out more than one
+  # repository, which moves `self` to $(Build.SourcesDirectory)/<repository name>.
+  - name: workspace
+    type: string
+    default: $(Build.SourcesDirectory)
+
+  # The version of EventCatalog Agents to run: a tag of event-catalog/agents. Keep it the same as the
+  # `ref` of the repository resource this template comes from.
+  - name: agentsVersion
+    type: string
+    default: v2
+
+  # Environment for the agent, such as your model provider key. Secret variables are not passed to
+  # scripts unless you map them here: { ANTHROPIC_API_KEY: $(ANTHROPIC_API_KEY) }.
+  - name: env
+    type: object
+    default: {}
+
+steps:
+  - task: UseNode@1
+    displayName: Use Node.js 24
+    inputs:
+      version: 24.x
+
+  - bash: |
+      set -euo pipefail
+      npm install --global --silent pnpm@11
+      rm -rf "$AGENTS_DIR"
+      git clone --quiet --depth 1 --branch "$AGENTS_VERSION" https://github.com/event-catalog/agents.git "$AGENTS_DIR"
+      cd "$AGENTS_DIR"
+      pnpm install --prod=false --frozen-lockfile
+    displayName: Install EventCatalog Agents ${{ parameters.agentsVersion }}
+    env:
+      AGENTS_DIR: $(Agent.TempDirectory)/eventcatalog-agents
+      AGENTS_VERSION: ${{ parameters.agentsVersion }}
+
+  - bash: pnpm exec tsx src/checkout-catalog.ts
+    displayName: Check out EventCatalog
+    workingDirectory: $(Agent.TempDirectory)/eventcatalog-agents
+    env:
+      EVENTCATALOG_CATALOG_PATH: eventcatalog
+      EVENTCATALOG_CATALOG_PROVIDER: ${{ parameters.catalogProvider }}
+      EVENTCATALOG_CATALOG_REF: ${{ parameters.catalogRef }}
+      EVENTCATALOG_CATALOG_REPO: ${{ parameters.catalogRepo }}
+      EVENTCATALOG_CATALOG_TOKEN: ${{ parameters.catalogToken }}
+      EVENTCATALOG_WORKSPACE: ${{ parameters.workspace }}
+
+  # The agent reads its settings from the EVENTCATALOG_* variables and the Azure Pipelines
+  # predefined variables (see src/config.ts), so it needs no payload.
+  - bash: pnpm exec tsx src/run.ts "${{ parameters.agent }}"
+    displayName: Run EventCatalog agent (${{ parameters.agent }})
+    workingDirectory: $(Agent.TempDirectory)/eventcatalog-agents
+    env:
+      ${{ each variable in parameters.env }}:
+        ${{ variable.key }}: ${{ variable.value }}
+      EVENTCATALOG_ADRS: ${{ parameters.adrs }}
+      EVENTCATALOG_CATALOG_PATH: eventcatalog
+      EVENTCATALOG_CATALOG_PROVIDER: ${{ parameters.catalogProvider }}
+      EVENTCATALOG_CATALOG_REF: ${{ parameters.catalogRef }}
+      EVENTCATALOG_CATALOG_REPO: ${{ parameters.catalogRepo }}
+      EVENTCATALOG_CATALOG_TOKEN: ${{ parameters.catalogToken }}
+      EVENTCATALOG_CATALOG_URL: ${{ parameters.catalogUrl }}
+      EVENTCATALOG_IGNORE_PATHS: ${{ parameters.ignorePaths }}
+      EVENTCATALOG_MODEL: ${{ parameters.model }}
+      EVENTCATALOG_SCHEMA_EXTENSIONS: ${{ parameters.schemaExtensions }}
+      EVENTCATALOG_WORKSPACE: ${{ parameters.workspace }}
+      # Comments on the pull request and reads its description, as the pipeline's build service.
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)

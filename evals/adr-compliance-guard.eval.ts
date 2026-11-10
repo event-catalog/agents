@@ -13,7 +13,7 @@ import {
   type CatalogAdr,
 } from '@/src/utils/adrs';
 import { formatNumberedDiff, parseDiff } from '@/src/utils/diff';
-import { formatAdrComplianceComment, formatAdrComplianceResolvedComment } from '@/src/utils/github/reporter';
+import { formatAdrComplianceComment, formatAdrComplianceResolvedComment } from '@/src/utils/pull-requests/reporter';
 import { review } from '@/src/workflows/adr-compliance';
 import { scoreAdrCompliance } from './support/adr-compliance-scorers';
 import { CATALOG_DOMAIN_ADRS } from './fixtures/adr-compliance/scenario';

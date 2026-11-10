@@ -1,5 +1,5 @@
-import { Octokit } from 'octokit';
 import type { ReviewConfig } from '@/src/config';
+import { getCatalogDisplayName, getCatalogTreeUrl, getSourceFileUrl, getSourceProvider, type CommentTone } from '@/src/providers';
 import type { AdrConflict, BreakingChangeResponse, ImpactPlanResponse, SchemaConsumersResponse } from '@/src/review-output';
 import { stripResourceLinks, type CatalogAdr } from '@/src/utils/adrs';
 import type { ResourceChange } from '@/src/utils/catalog-changes';
@@ -10,7 +10,7 @@ import {
   formatResourceChanges,
   listReviewNotes,
   maxBacktickRun,
-} from '@/src/utils/github/format';
+} from '@/src/utils/pull-requests/format';
 
 const COMMENT_MARKER = '<!-- eventcatalog-actions:pr-review -->';
 const BREAKING_CHANGES_COMMENT_MARKER = '<!-- eventcatalog-actions:breaking-changes -->';
@@ -49,12 +49,13 @@ export type ReviewComment =
       nextStep: string;
     };
 
-type CommentContext = Pick<ReviewConfig, 'catalogRepo' | 'catalogRef'>;
+type CommentContext = Pick<ReviewConfig, 'catalogRepo' | 'catalogRef'> &
+  Partial<Pick<ReviewConfig, 'catalogProvider' | 'azureDevOps'>>;
 
 const formatFooter = (context: CommentContext, reviewedFiles?: number): string => {
-  const catalog = context.catalogRepo
-    ? `catalog [${context.catalogRepo}@${context.catalogRef}](https://github.com/${context.catalogRepo}/tree/${encodeURI(context.catalogRef)})`
-    : undefined;
+  const catalogUrl = getCatalogTreeUrl(context);
+  const catalogName = `${getCatalogDisplayName(context)}@${context.catalogRef}`;
+  const catalog = context.catalogRepo ? `catalog ${catalogUrl ? `[${catalogName}](${catalogUrl})` : catalogName}` : undefined;
   const reviewed =
     reviewedFiles === undefined ? undefined : `reviewed ${reviewedFiles} changed file${reviewedFiles === 1 ? '' : 's'}`;
   return `<sub>${['EventCatalog Agents · Code-to-Docs', reviewed, catalog].filter(Boolean).join(' · ')}</sub>`;
@@ -134,60 +135,29 @@ ${formatFooter(context)}
 };
 
 /**
- * Creates a new pull request comment, or updates the existing one that carries `marker`. Both the
- * PR review and breaking-changes workflows post a single, self-updating comment this way, so reruns
- * replace their previous comment instead of stacking up new ones.
+ * Creates a new pull request comment, or updates the existing one that carries `marker`. Every workflow
+ * posts a single, self-updating comment this way, so reruns replace their previous comment instead of
+ * stacking up new ones.
  */
 const upsertPullRequestComment = async (
   config: ReviewConfig,
   marker: string,
   body: string,
-  { onlyUpdateExisting = false } = {}
+  { tone, onlyUpdateExisting = false }: { tone: CommentTone; onlyUpdateExisting?: boolean }
 ): Promise<string | undefined> => {
-  if (!config.github) {
-    console.error('[eventcatalog:github] No GitHub PR context found; skipping pull request comment.');
+  const source = getSourceProvider(config);
+
+  if (!source) {
+    console.error('[eventcatalog:pull-request] No pull request context found; skipping pull request comment.');
     return undefined;
   }
 
-  const { owner, repo, prNumber, token } = config.github;
-  const octokit = new Octokit({ auth: token });
-
-  const { data: comments } = await octokit.rest.issues.listComments({
-    owner,
-    repo,
-    issue_number: prNumber,
-    per_page: 100,
-  });
-
-  const existingComment = comments.find((comment) => comment.body?.includes(marker));
-
-  if (existingComment) {
-    const { data } = await octokit.rest.issues.updateComment({
-      owner,
-      repo,
-      comment_id: existingComment.id,
-      body,
-    });
-
-    console.error(`[eventcatalog:github] Updated pull request comment: ${data.html_url}`);
-    return data.html_url;
-  }
-
-  if (onlyUpdateExisting) return undefined;
-
-  const { data } = await octokit.rest.issues.createComment({
-    owner,
-    repo,
-    issue_number: prNumber,
-    body,
-  });
-
-  console.error(`[eventcatalog:github] Created pull request comment: ${data.html_url}`);
-  return data.html_url;
+  return source.upsertComment(marker, body, { tone, onlyUpdateExisting });
 };
 
+/** Code-to-Docs reports what it did to the catalog: information, not something to resolve on the PR. */
 export const postPullRequestSummary = async (config: ReviewConfig, comment: ReviewComment): Promise<string | undefined> =>
-  upsertPullRequestComment(config, COMMENT_MARKER, formatReviewComment(comment, config));
+  upsertPullRequestComment(config, COMMENT_MARKER, formatReviewComment(comment, config), { tone: 'info' });
 
 const formatCodeBlock = (value: string, language = ''): string => {
   const content = value.replace(/\r\n?/g, '\n').trimEnd() || '(No diff lines returned.)';
@@ -362,7 +332,9 @@ export const postBreakingChangesSummary = async (
   config: ReviewConfig,
   reports: BreakingSchemaReport[]
 ): Promise<string | undefined> =>
-  upsertPullRequestComment(config, BREAKING_CHANGES_COMMENT_MARKER, formatBreakingChangesComment(reports, config.catalogUrl));
+  upsertPullRequestComment(config, BREAKING_CHANGES_COMMENT_MARKER, formatBreakingChangesComment(reports, config.catalogUrl), {
+    tone: 'warning',
+  });
 
 /** What an ADR Compliance run found, for the comment on the source pull request. */
 export interface AdrComplianceReport {
@@ -374,7 +346,8 @@ export interface AdrComplianceReport {
   adrs: CatalogAdr[];
 }
 
-type AdrCommentContext = Pick<ReviewConfig, 'adrs' | 'catalogRef' | 'catalogRepo' | 'catalogUrl' | 'github' | 'headSha'>;
+type AdrCommentContext = Pick<ReviewConfig, 'adrs' | 'catalogRef' | 'catalogRepo' | 'catalogUrl' | 'github' | 'headSha'> &
+  Partial<Pick<ReviewConfig, 'catalogProvider' | 'azureDevOps'>>;
 
 /** Links to the hosted catalog when configured, otherwise to the ADR in the catalog repository. */
 const formatAdrLink = (adrId: string, adrs: CatalogAdr[], context: AdrCommentContext): string => {
@@ -384,19 +357,15 @@ const formatAdrLink = (adrId: string, adrs: CatalogAdr[], context: AdrCommentCon
 
   const url =
     buildResourceUrl(context.catalogUrl, { id: adr.id, type: 'adr', version: adr.version }) ??
-    (context.catalogRepo
-      ? `https://github.com/${context.catalogRepo}/tree/${encodeURI(context.catalogRef)}/${encodeURI(adr.path)}`
-      : undefined);
+    getCatalogTreeUrl(context, adr.path);
 
   return url ? formatMarkdownLink(label, url) : label;
 };
 
 const formatConflictLocation = (conflict: AdrConflict, context: AdrCommentContext): string => {
   const location = formatInlineCode(`${conflict.file}:${conflict.line}`);
-  if (!context.github || !context.headSha) return location;
-
-  const { owner, repo } = context.github;
-  return `[${location}](https://github.com/${owner}/${repo}/blob/${context.headSha}/${encodeURI(conflict.file)}#L${conflict.line})`;
+  const url = context.headSha ? getSourceFileUrl(context, context.headSha, conflict.file, conflict.line) : undefined;
+  return url ? `[${location}](${url})` : location;
 };
 
 const formatAdrFooter = (adrs: CatalogAdr[], context: AdrCommentContext): string => {
@@ -458,20 +427,19 @@ ${formatAdrFooter(adrs, context)}
 `;
 
 /**
- * The pull request description as it is now. Read from GitHub rather than the event, so re-running a
- * workflow after adding an `adr-exception:` line picks it up. Exceptions are optional, so a failed read
- * is logged rather than failing the run: the conflict is then reported without its exception.
+ * The pull request description as it is now. Read from GitHub or Azure DevOps rather than the event, so
+ * re-running a workflow after adding an `adr-exception:` line picks it up. Exceptions are optional, so a
+ * failed read is logged rather than failing the run: the conflict is then reported without its exception.
  */
 export const getPullRequestBody = async (config: ReviewConfig): Promise<string | undefined> => {
-  if (config.pullRequestBody !== undefined || !config.github) return config.pullRequestBody;
+  const source = config.pullRequestBody === undefined ? getSourceProvider(config) : undefined;
+  if (!source) return config.pullRequestBody;
 
-  const { owner, repo, prNumber, token } = config.github;
   try {
-    const { data } = await new Octokit({ auth: token }).rest.pulls.get({ owner, repo, pull_number: prNumber });
-    return data.body ?? undefined;
+    return await source.getDescription();
   } catch (error) {
     console.error(
-      `[eventcatalog:github] Could not read the pull request description: ${error instanceof Error ? error.message : String(error)}`
+      `[eventcatalog:pull-request] Could not read the pull request description: ${error instanceof Error ? error.message : String(error)}`
     );
     return undefined;
   }
@@ -479,7 +447,10 @@ export const getPullRequestBody = async (config: ReviewConfig): Promise<string |
 
 /** Posts (or updates) the ADR Compliance comment. Call this when there is something to report. */
 export const postAdrComplianceSummary = async (config: ReviewConfig, report: AdrComplianceReport): Promise<string | undefined> =>
-  upsertPullRequestComment(config, ADR_COMPLIANCE_COMMENT_MARKER, formatAdrComplianceComment(report, config));
+  upsertPullRequestComment(config, ADR_COMPLIANCE_COMMENT_MARKER, formatAdrComplianceComment(report, config), {
+    // Only exceptions the author recorded is information; a conflict is something to look at.
+    tone: report.conflicts.length > 0 ? 'warning' : 'info',
+  });
 
 /**
  * Marks an earlier ADR Compliance comment as resolved, so a stale warning doesn't stay on the pull
@@ -487,5 +458,6 @@ export const postAdrComplianceSummary = async (config: ReviewConfig, report: Adr
  */
 export const resolveAdrComplianceSummary = async (config: ReviewConfig, adrs: CatalogAdr[]): Promise<string | undefined> =>
   upsertPullRequestComment(config, ADR_COMPLIANCE_COMMENT_MARKER, formatAdrComplianceResolvedComment(adrs, config), {
+    tone: 'resolved',
     onlyUpdateExisting: true,
   });

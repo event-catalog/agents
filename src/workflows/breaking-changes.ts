@@ -1,11 +1,12 @@
 import { BreakingChanges } from '@/src/agents/breaking-changes';
 import { initWithData } from '@/src/agents/structured-results';
 import { CLOSED_WITHOUT_MERGE_MESSAGE, resolveConfig, runTrigger, type ReviewConfig, type ReviewPayload } from '@/src/config';
-import { postBreakingChangesSummary, type BreakingSchemaReport } from '@/src/utils/github/reporter';
+import { postBreakingChangesSummary, type BreakingSchemaReport } from '@/src/utils/pull-requests/reporter';
 import { detectBreakingSchemaChange } from '@/src/prompts/detect-breaking-schema-changes';
 import { findSchemaConsumers } from '@/src/prompts/find-schema-consumers';
 import { resolveCatalogPath } from '@/src/utils/eventcatalog-utils';
 import { getChangedFiles } from '@/src/utils/diff';
+import { resolvePullRequestContext } from '@/src/providers';
 import { getChangedSchemaFiles } from '@/src/utils/schema-detection';
 import { trackBreakingChangesCompleted, trackBreakingChangesError, type BreakingChangesOutcome } from '@/src/utils/analytics';
 
@@ -21,9 +22,10 @@ type BreakingChangesResult = {
  */
 export async function run(payload: ReviewPayload | undefined, env: NodeJS.ProcessEnv = process.env) {
   const startedAt = Date.now();
-  const config = resolveConfig(payload, env);
+  let config = resolveConfig(payload, env);
 
   try {
+    config = await resolvePullRequestContext(config);
     const { outcome, reports } = await review(payload, config);
     await trackBreakingChangesCompleted(outcome, {
       model: config.model,
@@ -45,6 +47,11 @@ async function review(payload: ReviewPayload | undefined, config: ReviewConfig):
   console.error('[eventcatalog:flue] Breaking Changes Agent workflow started');
 
   // Like Code-to-Docs: a PR closed without merging has nothing to report.
+  if (config.skipReason) {
+    console.error(`[eventcatalog:flue] ${config.skipReason}`);
+    return { outcome: 'no_pull_request', reports: [] };
+  }
+
   if (config.pullRequestState === 'closed') {
     console.error(`[eventcatalog:flue] ${CLOSED_WITHOUT_MERGE_MESSAGE}`);
     return { outcome: 'closed_without_merge', reports: [] };
