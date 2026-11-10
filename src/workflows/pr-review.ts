@@ -1,8 +1,8 @@
 import { CodeToDocs } from '@/src/agents/code-to-docs';
 import { initWithData } from '@/src/agents/structured-results';
-import { CLOSED_WITHOUT_MERGE_MESSAGE, resolveConfig, runTrigger, type ReviewPayload } from '@/src/config';
-import { createOrUpdateCatalogPullRequest, preflightCatalogPullRequestAccess } from '@/src/utils/github/catalog-pr';
-import { postPullRequestSummary } from '@/src/utils/github/reporter';
+import { CLOSED_WITHOUT_MERGE_MESSAGE, resolveConfig, runTrigger, type ReviewConfig, type ReviewPayload } from '@/src/config';
+import { createOrUpdateCatalogPullRequest, preflightCatalogPullRequestAccess } from '@/src/utils/pull-requests/catalog-pr';
+import { postPullRequestSummary } from '@/src/utils/pull-requests/reporter';
 import { applyDocumentationPlan } from '@/src/prompts/apply-documentation-plan-to-catalog';
 import { createDocumentationPlan } from '@/src/prompts/create-documentation-plan-from-code-changes';
 import { archivePreviousVersions } from '@/src/utils/archive-versions';
@@ -13,6 +13,7 @@ import {
   resolveCatalogPath,
 } from '@/src/utils/eventcatalog-utils';
 import { getChangedFiles } from '@/src/utils/diff';
+import { catalogAccessNextStep, describeSettings, resolvePullRequestContext } from '@/src/providers';
 import { getUnauthorizedCatalogChanges } from '@/src/utils/impact-plan';
 import { withVersionPinTargets } from '@/src/utils/version-pins';
 import { trackPrReviewCompleted, trackPrReviewError } from '@/src/utils/analytics';
@@ -23,9 +24,10 @@ import { trackPrReviewCompleted, trackPrReviewError } from '@/src/utils/analytic
  */
 export async function run(payload: ReviewPayload | undefined, env: NodeJS.ProcessEnv = process.env) {
   const startedAt = Date.now();
-  const config = resolveConfig(payload, env);
+  let config = resolveConfig(payload, env);
 
   try {
+    config = await resolvePullRequestContext(config);
     const result = await review(payload, config);
     await trackPrReviewCompleted(config, result, {
       model: config.model,
@@ -43,11 +45,17 @@ export async function run(payload: ReviewPayload | undefined, env: NodeJS.Proces
   }
 }
 
-async function review(payload: ReviewPayload | undefined, config: ReturnType<typeof resolveConfig>) {
+async function review(payload: ReviewPayload | undefined, config: ReviewConfig) {
   console.error('[eventcatalog:flue] PR review workflow started');
 
   // A workflow that runs on merge triggers on every closed PR; a PR closed without merging has nothing
   // to document. Skip it quietly, without a comment, in case the workflow has no `if: merged` guard.
+  // A run with no pull request (e.g. an Azure Pipelines build of a direct push) has nothing to document.
+  if (config.skipReason) {
+    console.error(`[eventcatalog:flue] ${config.skipReason}`);
+    return { message: config.skipReason, noPullRequest: true, reviewed: 0, skipped: true };
+  }
+
   if (config.pullRequestState === 'closed') {
     console.error(`[eventcatalog:flue] ${CLOSED_WITHOUT_MERGE_MESSAGE}`);
     return { message: CLOSED_WITHOUT_MERGE_MESSAGE, reviewed: 0, skipped: true };
@@ -59,7 +67,7 @@ async function review(payload: ReviewPayload | undefined, config: ReturnType<typ
     await postPullRequestSummary(config, {
       kind: 'not-run',
       reason: `No EventCatalog project was found in ${config.catalogRepo ?? 'the catalog repository'} at \`${config.catalogRef}\`: ${result.message}.`,
-      nextStep: 'Check that the `catalog-repo` and `catalog-ref` inputs point at your EventCatalog project.',
+      nextStep: `Check that the ${describeSettings(config, ['catalog-repo', 'catalog-ref'])} point at your EventCatalog project.`,
     });
     return result;
   }
@@ -78,7 +86,7 @@ async function review(payload: ReviewPayload | undefined, config: ReturnType<typ
     await postPullRequestSummary(config, {
       kind: 'not-run',
       reason: `The agent couldn't access the catalog repository: ${reason}`,
-      nextStep: `Give the \`catalog-token\` (or the GitHub App) read and write access to ${config.catalogRepo ?? 'the catalog repository'}, with permission to open pull requests.`,
+      nextStep: catalogAccessNextStep(config),
     });
     return result;
   }
@@ -99,7 +107,7 @@ async function review(payload: ReviewPayload | undefined, config: ReturnType<typ
     await postPullRequestSummary(config, {
       kind: 'not-run',
       reason: 'Every file this pull request changes is in an ignored path, so there was nothing to review.',
-      nextStep: 'None. If some of these files should be reviewed, change the `ignore-paths` input.',
+      nextStep: `None. If some of these files should be reviewed, change the ${describeSettings(config, ['ignore-paths'])}.`,
     });
     return result;
   }

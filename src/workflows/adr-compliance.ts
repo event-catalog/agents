@@ -15,8 +15,9 @@ import {
 } from '@/src/utils/adrs';
 import { trackAdrComplianceCompleted, trackAdrComplianceError, type AdrComplianceOutcome } from '@/src/utils/analytics';
 import { getChangedFiles } from '@/src/utils/diff';
+import { resolvePullRequestContext } from '@/src/providers';
 import { doesCatalogExist, MISSING_CATALOG_MESSAGE, resolveCatalogPath } from '@/src/utils/eventcatalog-utils';
-import { getPullRequestBody, postAdrComplianceSummary, resolveAdrComplianceSummary } from '@/src/utils/github/reporter';
+import { getPullRequestBody, postAdrComplianceSummary, resolveAdrComplianceSummary } from '@/src/utils/pull-requests/reporter';
 
 /** The result of an ADR Compliance run, plus the outcome we report to analytics. */
 export type AdrComplianceResult = {
@@ -45,7 +46,7 @@ export async function run(payload: ReviewPayload | undefined, env: NodeJS.Proces
   const context = { model: config.model, trigger: runTrigger(config) };
 
   try {
-    const result = await review(payload, config);
+    const result = await review(payload, await resolvePullRequestContext(config));
     await trackAdrComplianceCompleted(result.outcome, { ...context, durationMs: Date.now() - startedAt });
     return result;
   } catch (error) {
@@ -66,6 +67,11 @@ const emptyResult = (outcome: AdrComplianceOutcome, adrs: CatalogAdr[] = []): Ad
 
 export async function review(payload: ReviewPayload | undefined, config: ReviewConfig): Promise<AdrComplianceResult> {
   console.error('[eventcatalog:flue] ADR Compliance workflow started');
+
+  if (config.skipReason) {
+    console.error(`[eventcatalog:flue] ${config.skipReason}`);
+    return emptyResult('no_pull_request');
+  }
 
   if (config.pullRequestState === 'closed') {
     console.error(`[eventcatalog:flue] ${CLOSED_WITHOUT_MERGE_MESSAGE}`);

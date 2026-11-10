@@ -1,9 +1,9 @@
 import { expect, test } from 'vitest';
 import type { ImpactPlanResponse } from '@/src/review-output';
 import type { ResourceChange } from '@/src/utils/catalog-changes';
-import { formatCatalogPullRequestBody } from '@/src/utils/github/catalog-pr';
-import { nestHeadings } from '@/src/utils/github/format';
-import { formatBreakingChangesComment, formatReviewComment, type BreakingSchemaReport } from '@/src/utils/github/reporter';
+import { formatCatalogPullRequestBody } from '@/src/utils/pull-requests/catalog-pr';
+import { nestHeadings } from '@/src/utils/pull-requests/format';
+import { formatBreakingChangesComment, formatReviewComment, type BreakingSchemaReport } from '@/src/utils/pull-requests/reporter';
 
 test('formats breaking-change diff snippets as top-level fenced code blocks', () => {
   const reports: BreakingSchemaReport[] = [

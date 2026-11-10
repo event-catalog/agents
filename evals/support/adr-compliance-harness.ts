@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { createHarness } from 'vitest-evals';
 import { resolveConfig, type ReviewPayload } from '@/src/config';
-import { formatAdrComplianceComment } from '@/src/utils/github/reporter';
+import { formatAdrComplianceComment } from '@/src/utils/pull-requests/reporter';
 import { review, type AdrComplianceResult } from '@/src/workflows/adr-compliance';
 import { emptyUsage, ensureFlueRuntime, recordAgentActivity, type UsageTotals } from './flue-runtime';
 import { MODEL } from './harness';

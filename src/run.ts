@@ -3,7 +3,7 @@ import { start } from '@flue/runtime/node';
 import { AdrCompliance } from '@/src/agents/adr-compliance';
 import { BreakingChanges } from '@/src/agents/breaking-changes';
 import { CodeToDocs } from '@/src/agents/code-to-docs';
-import type { ReviewPayload } from '@/src/config';
+import { isAzurePipelines, type ReviewPayload } from '@/src/config';
 import { run as runAdrCompliance } from '@/src/workflows/adr-compliance';
 import { run as runBreakingChanges } from '@/src/workflows/breaking-changes';
 import { run as runPrReview } from '@/src/workflows/pr-review';
@@ -48,9 +48,13 @@ const main = async (): Promise<void> => {
 };
 
 main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
   if (process.env.GITHUB_ACTIONS === 'true') {
     // Surfaces the failure as an annotation on the workflow run summary.
-    console.error(`::error::${error instanceof Error ? error.message : String(error)}`);
+    console.error(`::error::${message}`);
+  } else if (isAzurePipelines(process.env)) {
+    // The Azure Pipelines equivalent: an error on the run's summary page. Logging commands are one line.
+    console.log(`##vso[task.logissue type=error]${message.replace(/\r?\n/g, ' ')}`);
   }
   console.error(`[eventcatalog:flue] ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
   process.exitCode = 1;
