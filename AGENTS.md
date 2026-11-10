@@ -146,7 +146,8 @@ enforcement, and catalog change detection explicit in code.
 - `src/review-output.ts` — Valibot schemas for the structured agent responses (impact plan + apply
   result; breaking-change score + schema consumers; relevant ADRs + ADR conflicts).
 - `evals/` — the eval suite that runs the real agent against fixtures. See `evals/README.md`.
-- `README.md` — user-facing action usage and setup notes.
+- `README.md` — a short overview of the agents, linking to the setup guides on eventcatalog.dev
+  (`/docs/development/agents/...`), where the full GitHub and Azure DevOps docs live (website-2).
 
 ## Runtime Flow
 

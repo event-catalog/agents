@@ -1,5 +1,7 @@
 # EventCatalog Agents for Azure Pipelines: a steps template that runs one agent on an Azure Repos pull
-# request. The Azure Pipelines counterpart of the GitHub Action in action.yml; see the README for setup.
+# request. The Azure Pipelines counterpart of the GitHub Action in action.yml. Setup guides:
+# https://www.eventcatalog.dev/docs/development/agents/set-up-code-to-docs/azure-devops (and the
+# matching pages for set-up-breaking-changes and set-up-adr-compliance).
 #
 #   resources:
 #     repositories:
