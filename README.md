@@ -122,6 +122,8 @@ flowchart LR
     Verify --> Comment[Comment on source PR]
 ```
 
+![ADR Compliance commenting on a GitHub pull request](docs/images/github-adr-compliance.png)
+
 ### Choosing which ADRs to check
 
 The `adrs` setting is required. It takes comma-separated globs relative to your catalog root, so a
@@ -394,6 +396,8 @@ same work as on GitHub: they comment on the pull request in a thread, and Code-t
 documentation pull requests in your catalog repository. The catalog can be in Azure Repos (the default)
 or [on GitHub](#using-a-catalog-on-github).
 
+![Breaking Changes commenting on an Azure Repos pull request](docs/images/azure-devops-breaking-changes.png)
+
 Pull request runs come from a **build validation** branch policy, the usual way to run checks on Azure
 Repos pull requests (Azure Repos ignores the YAML `pr:` trigger). Code-to-Docs runs from the pipeline's
 CI trigger once a pull request merges, and finds the pull request from the merge commit.
@@ -528,6 +532,9 @@ The agents behave as they do on GitHub, with these differences:
   conflict is fixed, its thread is marked **resolved**. Code-to-Docs posts its summary as a **closed**
   thread, because there is nothing to resolve on the pull request. Each agent keeps one thread up to
   date rather than adding new ones.
+
+  ![ADR Compliance thread on an Azure Repos pull request](docs/images/azure-devops-adr-compliance.png)
+
 - **Impact diagrams** in Breaking Changes comments show as Mermaid source: Azure DevOps renders Mermaid
   only in wikis.
 - **Catalog pull request descriptions** are shortened to fit Azure DevOps' 4,000-character limit.
