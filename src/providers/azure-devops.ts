@@ -1,5 +1,7 @@
 import type { AzureDevOpsOrganization, AzureDevOpsReviewTarget, ReviewConfig } from '@/src/config';
 import { gitConfigEnv } from '@/src/utils/git';
+import { sendWithRetry } from '@/src/providers/http';
+import { COMMENT_MARKER_LINE, fitLength, fitMarkdown, withoutGithubExtensions } from '@/src/providers/markdown';
 import type {
   AgentPullRequestStats,
   CatalogPreflightResult,
@@ -9,6 +11,9 @@ import type {
   SourcePullRequestProvider,
   UpsertCommentOptions,
 } from '@/src/providers/types';
+
+export { retryOptions } from '@/src/providers/http';
+export { fitMarkdown } from '@/src/providers/markdown';
 
 /**
  * Azure DevOps (Azure Repos): pull request threads and catalog pull requests, through the REST API.
@@ -124,24 +129,6 @@ const apiUrl = ({ collectionUri, project, repository }: AzureRepository, path: s
   return `${base}${path}?${search.toString()}`;
 };
 
-const MAX_ATTEMPTS = 3;
-/** The first retry's wait; each retry doubles it, unless the response says how long to wait. */
-export const retryOptions = { baseDelayMs: 1000 };
-
-/**
- * Whether a failed call can be sent again. A 429 was never processed, so any call can retry; a server
- * error can only retry a call that is safe to repeat: not a POST that creates a thread or pull request,
- * unless the caller says it only reads (the pull request query).
- */
-const isRetryable = (status: number, safeToRepeat: boolean): boolean => status === 429 || (status >= 500 && safeToRepeat);
-
-const retryDelay = (response: Response, attempt: number): number => {
-  const retryAfter = Number(response.headers.get('retry-after'));
-  return Number.isFinite(retryAfter) && retryAfter > 0
-    ? Math.min(retryAfter, 30) * 1000
-    : retryOptions.baseDelayMs * 2 ** (attempt - 1);
-};
-
 const request = async <T>(
   token: string,
   method: string,
@@ -160,13 +147,7 @@ const request = async <T>(
       body: body === undefined ? undefined : JSON.stringify(body),
     });
 
-  let response = await send();
-  for (let attempt = 1; attempt < MAX_ATTEMPTS && isRetryable(response.status, safeToRepeat); attempt++) {
-    // Release the connection held by the response we're discarding.
-    await response.body?.cancel();
-    await new Promise((resolve) => setTimeout(resolve, retryDelay(response, attempt)));
-    response = await send();
-  }
+  const response = await sendWithRetry(send, safeToRepeat);
 
   const text = await response.text();
   const isJson = (response.headers.get('content-type') ?? '').includes('json');
@@ -221,54 +202,9 @@ export const azureSourceRepository = (target: AzureDevOpsReviewTarget): AzureRep
   repository: target.repository,
 });
 
-/**
- * The comment and pull request markdown is written for GitHub. Azure DevOps renders markdown but not raw
- * HTML (it would show `<sub>` and `<!-- -->` as text) or GitHub alerts, so those are converted. Mermaid
- * diagrams are left as they are: Azure DevOps renders them only in wikis, so they show as code blocks.
- */
+/** GitHub markdown as Azure DevOps renders it. The marker that finds the comment lives in a thread property instead. */
 export const toAzureDevOpsMarkdown = (markdown: string): string =>
-  markdown
-    // The marker that finds the comment again lives in a thread property instead.
-    .replace(/^<!-- eventcatalog-actions:[\w-]+ -->\n?/gm, '')
-    .replace(
-      /^> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\n> /gm,
-      (_, kind: string) => `> **${kind.charAt(0)}${kind.slice(1).toLowerCase()}:** `
-    )
-    .replace(/<sub>([\s\S]*?)<\/sub>/g, (_, text: string) => `_${text.trim()}_`);
-
-/** Shortens text to `max` characters, ending with a note that it was cut. */
-const fitLength = (value: string, max: number, note: string): string =>
-  value.length <= max ? value : `${value.slice(0, max - note.length).trimEnd()}${note}`;
-
-const FENCE = /^\s*(`{3,}|~{3,})/;
-
-/**
- * Shortens markdown to `max` characters at the end of a paragraph (or else a line), so the cut doesn't
- * land inside a table row or a link, and closes a code block it would leave open. Ends with `note`.
- */
-export const fitMarkdown = (markdown: string, max: number, note: string): string => {
-  if (markdown.length <= max) return markdown;
-
-  // Leave room for the note and a closing fence.
-  const budget = max - note.length - 8;
-  const slice = markdown.slice(0, budget);
-  // Prefer the end of a paragraph, then the end of a line, as long as that keeps most of the text.
-  const paragraphEnd = slice.lastIndexOf('\n\n');
-  const lineEnd = slice.lastIndexOf('\n');
-  const cut = paragraphEnd > budget / 2 ? paragraphEnd : lineEnd > budget / 2 ? lineEnd : budget;
-  let kept = slice.slice(0, cut).trimEnd();
-
-  let openFence: string | undefined;
-  for (const line of kept.split('\n')) {
-    const fence = line.match(FENCE)?.[1];
-    if (!fence) continue;
-    if (!openFence) openFence = fence;
-    else if (fence[0] === openFence[0] && fence.length >= openFence.length) openFence = undefined;
-  }
-  if (openFence) kept = `${kept}\n${openFence}`;
-
-  return `${kept}${note}`;
-};
+  withoutGithubExtensions(markdown.replace(COMMENT_MARKER_LINE, ''));
 
 // --- Source pull request -------------------------------------------------------------------------------
 

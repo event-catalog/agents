@@ -50,7 +50,7 @@ export type ReviewComment =
     };
 
 type CommentContext = Pick<ReviewConfig, 'catalogRepo' | 'catalogRef'> &
-  Partial<Pick<ReviewConfig, 'catalogProvider' | 'azureDevOps'>>;
+  Partial<Pick<ReviewConfig, 'catalogProvider' | 'azureDevOps' | 'bitbucket' | 'bitbucketWorkspace'>>;
 
 const formatFooter = (context: CommentContext, reviewedFiles?: number): string => {
   const catalogUrl = getCatalogTreeUrl(context);
@@ -347,7 +347,7 @@ export interface AdrComplianceReport {
 }
 
 type AdrCommentContext = Pick<ReviewConfig, 'adrs' | 'catalogRef' | 'catalogRepo' | 'catalogUrl' | 'github' | 'headSha'> &
-  Partial<Pick<ReviewConfig, 'catalogProvider' | 'azureDevOps'>>;
+  Partial<Pick<ReviewConfig, 'catalogProvider' | 'azureDevOps' | 'bitbucket' | 'bitbucketWorkspace'>>;
 
 /** Links to the hosted catalog when configured, otherwise to the ADR in the catalog repository. */
 const formatAdrLink = (adrId: string, adrs: CatalogAdr[], context: AdrCommentContext): string => {
@@ -427,7 +427,7 @@ ${formatAdrFooter(adrs, context)}
 `;
 
 /**
- * The pull request description as it is now. Read from GitHub or Azure DevOps rather than the event, so
+ * The pull request description as it is now. Read from the Git host rather than the event, so
  * re-running a workflow after adding an `adr-exception:` line picks it up. Exceptions are optional, so a
  * failed read is logged rather than failing the run: the conflict is then reported without its exception.
  */

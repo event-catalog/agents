@@ -23,13 +23,17 @@ export const formatInlineText = (value: string): string => value.replace(/\s+/g,
 const formatCell = (value: string): string => formatInlineText(value).replace(/\|/g, '\\|');
 
 /**
- * `https://github.com/acme/catalog/pull/21` → `acme/catalog#21`, and an Azure DevOps pull request
+ * `https://github.com/acme/catalog/pull/21` → `acme/catalog#21` (the same for Bitbucket's
+ * `…/pull-requests/21`), and an Azure DevOps pull request
  * (`…/Architecture/_git/catalog/pullrequest/21`) → `Architecture/catalog!21`, the way Azure DevOps refers
  * to pull requests. Anything else is returned as is.
  */
 export const formatPullRequestReference = (url: string): string => {
   const github = url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
   if (github) return `${github[1]}#${github[2]}`;
+
+  const bitbucket = url.match(/^https:\/\/bitbucket\.org\/([^/]+\/[^/]+)\/pull-requests\/(\d+)/);
+  if (bitbucket) return `${bitbucket[1]}#${bitbucket[2]}`;
 
   const azure = url.match(/\/([^/]+)\/_git\/([^/?#]+)\/pullrequest\/(\d+)/);
   if (!azure) return url;

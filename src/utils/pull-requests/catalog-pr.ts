@@ -75,7 +75,7 @@ const getCatalogBranchName = (config: ReviewConfig): string => {
 };
 
 export const formatCatalogPullRequestBody = (
-  config: Pick<ReviewConfig, 'github' | 'pullRequestState'> & Partial<Pick<ReviewConfig, 'azureDevOps'>>,
+  config: Pick<ReviewConfig, 'github' | 'pullRequestState'> & Partial<Pick<ReviewConfig, 'azureDevOps' | 'bitbucket'>>,
   changes: ResourceChange[],
   input: CreateCatalogPullRequestInput
 ): string => {
