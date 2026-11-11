@@ -50,7 +50,7 @@ async function review(payload: ReviewPayload | undefined, config: ReviewConfig) 
 
   // A workflow that runs on merge triggers on every closed PR; a PR closed without merging has nothing
   // to document. Skip it quietly, without a comment, in case the workflow has no `if: merged` guard.
-  // A run with no pull request (e.g. an Azure Pipelines build of a direct push) has nothing to document.
+  // A run with no pull request (e.g. a CI build of a direct push) has nothing to document.
   if (config.skipReason) {
     console.error(`[eventcatalog:flue] ${config.skipReason}`);
     return { message: config.skipReason, noPullRequest: true, reviewed: 0, skipped: true };

@@ -24,6 +24,7 @@ import {
   getPullRequestBody,
   postAdrComplianceSummary,
   postBreakingChangesSummary,
+  postPullRequestSummary,
   resolveAdrComplianceSummary,
   type BreakingSchemaReport,
 } from '@/src/utils/pull-requests/reporter';
@@ -169,7 +170,7 @@ describe('configuration', () => {
     const config = resolveConfig(undefined, PR_PIPELINE_ENV);
     expect(describeSettings(config, ['catalog-repo', 'catalog-ref'])).toBe('`--catalog-repo` and `--catalog-ref` options');
     expect(catalogAccessNextStep(config)).toBe(
-      'Give the access token in `EVENTCATALOG_CATALOG_TOKEN` (or EVENTCATALOG_BITBUCKET_TOKEN, when that is unset) the Repositories: Write and Pull requests: Write permissions on acme/eventcatalog.'
+      'Give the access token in `EVENTCATALOG_CATALOG_TOKEN` (or `EVENTCATALOG_BITBUCKET_TOKEN`, when that is unset) the Repositories: Write and Pull requests: Write permissions on acme/eventcatalog.'
     );
   });
 });
@@ -185,6 +186,8 @@ describe('repositories and links', () => {
       workspace: 'acme',
       repository: 'catalog',
     });
+    expect(parseBitbucketRepository('bitbucket.org/acme/catalog')).toEqual({ workspace: 'acme', repository: 'catalog' });
+    expect(resolveConfig({ catalogRepo: 'bitbucket.org/acme/catalog' }, {}).catalogProvider).toBe('bitbucket');
     expect(parseBitbucketRepository('acme/catalog')).toEqual({ workspace: 'acme', repository: 'catalog' });
     expect(parseBitbucketRepository('catalog', 'acme')).toEqual({ workspace: 'acme', repository: 'catalog' });
     expect(parseBitbucketRepository('catalog')).toBeUndefined();
@@ -327,6 +330,17 @@ describe('pull request comments', () => {
     expect(calls.at(-1)?.method).toBe('DELETE');
   });
 
+  test('information leaves a comment resolved by hand as it is', async () => {
+    const calls = mockBitbucket({
+      'GET /pullrequests/7/comments': {
+        values: [{ id: 4, resolution: { type: 'resolved' }, content: { raw: marked('pr-review') } }],
+      },
+      'PUT /comments/4': { id: 4 },
+    });
+    await postPullRequestSummary(config(), { kind: 'not-run', reason: 'r', nextStep: 'n' });
+    expect(calls.map((call) => call.method)).toEqual(['GET', 'PUT']);
+  });
+
   test('a comment that cannot be resolved is still updated', async () => {
     mockBitbucket({
       'GET /pullrequests/7/comments': { values: [{ id: 4, content: { raw: marked('adr-compliance') } }] },
@@ -422,7 +436,22 @@ describe('the commits a pipeline diffs', () => {
 
   afterEach(() => rm(workspace, { recursive: true, force: true }));
 
-  const mergedPullRequests = (values: unknown[]) => mockBitbucket({ 'GET /pullrequests': { values } });
+  const mergedPullRequests = (values: unknown[], commitMessages: string[] = []) =>
+    mockBitbucket({
+      'GET /pullrequests': { values },
+      'GET /commits': { values: commitMessages.map((message) => ({ message: `${message}\n` })) },
+    });
+
+  /** Commits `messages` on top of `onto`, as a rebase onto the target branch would. Returns the last. */
+  const commitOnto = async (onto: string, messages: string[]) => {
+    await git('checkout', '-q', '--detach', onto);
+    for (const [index, message] of messages.entries()) {
+      await writeFile(join(workspace, `rebased-${index}.txt`), `${index}\n`);
+      await git('add', '-A');
+      await git('commit', '-qm', message);
+    }
+    return git('rev-parse', 'HEAD');
+  };
 
   test('a pull request pipeline diffs the source commit against the target branch', async () => {
     const env = { ...PR_PIPELINE_ENV, BITBUCKET_COMMIT: shas.feature, BITBUCKET_PR_DESTINATION_COMMIT: shas.base.slice(0, 12) };
@@ -455,28 +484,63 @@ describe('the commits a pipeline diffs', () => {
   });
 
   test('a squashed pull request diffs against its parent', async () => {
-    mergedPullRequests([{ id: 7, merge_commit: { hash: shas.squash.slice(0, 12) } }]);
+    mergedPullRequests([{ id: 7, merge_commit: { hash: shas.squash.slice(0, 12) } }], ['feature', 'feature: fix']);
     const config = await resolvePullRequestContext(
       resolveConfig({ workspace }, { ...BRANCH_PIPELINE_ENV, BITBUCKET_COMMIT: shas.squash })
     );
     expect(config).toMatchObject({ baseSha: shas.base, headSha: shas.squash });
   });
 
-  test('a fast-forwarded pull request diffs from the target branch commit it was opened against', async () => {
+  test('a fast-forwarded pull request of one commit diffs against its parent', async () => {
     // Fast-forward: main moves to the feature commit, whose parent is the older initial commit.
-    mergedPullRequests([
-      {
-        id: 8,
-        merge_commit: { hash: shas.feature.slice(0, 12) },
-        source: { commit: { hash: shas.feature.slice(0, 12) } },
-        destination: { commit: { hash: shas.initial.slice(0, 12) } },
-      },
-    ]);
+    mergedPullRequests([{ id: 8, merge_commit: { hash: shas.feature.slice(0, 12) } }], ['feature']);
     const config = await resolvePullRequestContext(
       resolveConfig({ workspace }, { ...BRANCH_PIPELINE_ENV, BITBUCKET_COMMIT: shas.feature })
     );
     expect(config).toMatchObject({ baseSha: shas.initial, headSha: shas.feature });
     expect(config.bitbucket?.prNumber).toBe(8);
+  });
+
+  test('a rebased and fast-forwarded pull request diffs all of its commits', async () => {
+    const messages = ['orders: add OrderShipped', 'orders: add the schema\n\nWith a body.', 'orders: fix a typo'];
+    const head = await commitOnto(shas.base, messages);
+    // The API lists the pull request's original commits, newest first, with the messages the rebase kept.
+    mergedPullRequests([{ id: 9, merge_commit: { hash: head.slice(0, 12) } }], [...messages].reverse());
+
+    const config = await resolvePullRequestContext(
+      resolveConfig({ workspace }, { ...BRANCH_PIPELINE_ENV, BITBUCKET_COMMIT: head })
+    );
+
+    expect(config).toMatchObject({ baseSha: shas.base, headSha: head });
+  });
+
+  test('a squash whose commit differs from the pull request commits diffs only the squashed commit', async () => {
+    const head = await commitOnto(shas.base, ['Merged in feature (pull request #9)']);
+    mergedPullRequests([{ id: 9, merge_commit: { hash: head.slice(0, 12) } }], ['one', 'two']);
+    const config = await resolvePullRequestContext(
+      resolveConfig({ workspace }, { ...BRANCH_PIPELINE_ENV, BITBUCKET_COMMIT: head })
+    );
+    expect(config).toMatchObject({ baseSha: shas.base, headSha: head });
+  });
+
+  test('a scheduled pipeline has nothing to review', async () => {
+    const calls = mockBitbucket({
+      'GET /pipelines/%7Bpipeline-uuid%7D': { trigger: { type: 'pipeline_trigger_schedule' } },
+    });
+    const env = { ...BRANCH_PIPELINE_ENV, BITBUCKET_COMMIT: shas.merge, BITBUCKET_PIPELINE_UUID: '{pipeline-uuid}' };
+
+    const config = await resolvePullRequestContext(resolveConfig({ workspace }, env));
+
+    expect(config.skipReason).toMatch(/ran on a schedule/);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('a pipeline whose trigger cannot be read is taken to be a push', async () => {
+    // No route for the pipeline: the token lacks Pipelines: Read.
+    mergedPullRequests([{ id: 7, merge_commit: { hash: shas.merge.slice(0, 12) } }]);
+    const env = { ...BRANCH_PIPELINE_ENV, BITBUCKET_COMMIT: shas.merge, BITBUCKET_PIPELINE_UUID: '{pipeline-uuid}' };
+    const config = await resolvePullRequestContext(resolveConfig({ workspace }, env));
+    expect(config.bitbucket?.prNumber).toBe(7);
   });
 
   test('a direct push has nothing to review', async () => {
@@ -568,16 +632,21 @@ describe('catalog pull requests in Bitbucket', () => {
     );
   });
 
-  test('updates the open pull request for the same branch', async () => {
-    const calls = mockBitbucket({ 'GET /pullrequests': { values: [{ id: 42 }] }, 'PUT /pullrequests/42': { id: 42 } });
+  test('updates the open pull request for the same branch, keeping its reviewers', async () => {
+    const calls = mockBitbucket({
+      'GET /pullrequests': { values: [{ id: 42 }] },
+      'GET /pullrequests/42': { id: 42, reviewers: [{ uuid: '{reviewer}', display_name: 'Dana' }] },
+      'PUT /pullrequests/42': { id: 42 },
+    });
 
     await createOrUpdateCatalogPullRequest(config, {
       impactPlan: plan,
       result: { prTitle: 't', prSummary: 's', sourcePrSummary: '' },
     });
 
-    expect(calls.map((call) => call.method)).toEqual(['GET', 'PUT']);
+    expect(calls.map((call) => call.method)).toEqual(['GET', 'GET', 'PUT']);
     expect(calls[0].url.searchParams.get('state')).toBe('OPEN');
+    expect(calls[2].body).toMatchObject({ title: 't', reviewers: [{ uuid: '{reviewer}' }] });
   });
 
   test('preflight checks the repository and the branch', async () => {

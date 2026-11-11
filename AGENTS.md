@@ -2,16 +2,16 @@
 
 **EventCatalog Agents** are [Flue](https://flueframework.com)-powered AI agents that keep
 EventCatalog documentation in sync with your code. The product is the agent; today it is delivered as
-a composite **GitHub Action** and an **Azure Pipelines template** that run in CI, but CI is a delivery
+a composite **GitHub Action**, an **Azure Pipelines template** and a **Bitbucket Pipelines script** that run in CI, but CI is a delivery
 surface, not the limit of the agent. Keep this distinction in mind when naming things and writing docs:
 reach for "the agent" for behavior, and "the action" only for GitHub Action mechanics (inputs, checkout,
 `$GITHUB_ACTION_PATH`, permissions).
 
-The agents talk to a Git host (GitHub or Azure DevOps) only through **providers** (`src/providers/`).
+The agents talk to a Git host (GitHub, Azure DevOps or Bitbucket Cloud) only through **providers** (`src/providers/`).
 Everything else (diffs, planning, catalog edits, the text of comments and pull requests) is shared and
 does not know where it runs. Add Git host behavior to a provider, not to the workflows.
 
-There are three agents today. Each run executes exactly one, selected by the `agent` input (the `agent` parameter in Azure Pipelines).
+There are three agents today. Each run executes exactly one, selected by the `agent` input (the `agent` parameter in Azure Pipelines, the first argument in Bitbucket Pipelines).
 
 **Code-to-Docs** (`agent: code-to-docs`, workflow `pr-review`) is a PR reviewer that:
 
@@ -40,7 +40,7 @@ reviewer that:
 - It never edits the catalog and never blocks a merge.
 
 Keep deterministic behavior in TypeScript. Let the agents reason about documentation and breakage,
-but keep GitHub and Azure DevOps writes, path resolution, diff parsing, token preflight, impact-plan
+but keep Git host writes, path resolution, diff parsing, token preflight, impact-plan
 enforcement, and catalog change detection explicit in code.
 
 ## Project Structure
@@ -53,7 +53,12 @@ enforcement, and catalog change detection explicit in code.
   `$(Agent.TempDirectory)`, checks out the catalog with `src/checkout-catalog.ts`, then runs
   `src/run.ts` with no payload: every setting reaches `resolveConfig` as an `EVENTCATALOG_*` or predefined
   variable. It never adds a `checkout` step, which would move the user's own checkout.
-- `src/checkout-catalog.ts` — checks out the catalog into `eventcatalog/` from GitHub or Azure Repos
+- `bitbucket-pipelines/run.sh` — the Bitbucket Pipelines counterpart: a step clones this repository at a
+  tag and runs the script, which maps its `--catalog-repo`-style options to `EVENTCATALOG_*` variables,
+  installs dependencies, checks out the catalog with `src/checkout-catalog.ts`, then runs `src/run.ts`.
+  Tokens come from secured variables (`EVENTCATALOG_BITBUCKET_TOKEN`, `EVENTCATALOG_CATALOG_TOKEN`),
+  never options. Bitbucket has no reusable YAML templates from another repository, hence a script.
+- `src/checkout-catalog.ts` — checks out the catalog into `eventcatalog/` from GitHub, Azure Repos or Bitbucket
   (`src/utils/checkout-catalog.ts`), for CI systems without actions/checkout. The token goes through the
   environment and is never stored in the checkout's git config.
 - `src/run.ts` — the entry point. Maps the `agent` input to its workflow (`code-to-docs` →
@@ -125,13 +130,22 @@ enforcement, and catalog change detection explicit in code.
   credentials, create/update the catalog PR, the agent's PR stats). Each role can be on a different
   provider. `github.ts` uses Octokit; `azure-devops.ts` uses the Azure Repos REST API (v6.0) with
   `System.AccessToken` or a PAT, tags its PR thread with a property instead of an HTML marker, and
-  adapts the GitHub markdown to what Azure DevOps renders. `azure-pipelines.ts` fills in what an Azure
+  adapts the GitHub markdown to what Azure DevOps renders. `bitbucket.ts` uses the Bitbucket Cloud REST
+  API (2.0) with an access token (bearer) or an `email:api-token` pair (basic), and marks its comment with
+  a markdown reference definition (`[//]: # (…)`), since Bitbucket shows HTML comments as text.
+  `http.ts` (retries) and `markdown.ts` (GitHub-only markdown, length limits) are shared by both REST
+  providers. `azure-pipelines.ts` fills in what an Azure
   build needs from git or the API: after a merge, the completed pull request that merged
   (`lastMergeCommit`) first, then the diff range (from the commit it merged onto, or the merge commit's
-  parents). `index.ts` is the only place that branches on the provider: it picks the providers from the
+  parents). `bitbucket-pipelines.ts` does the same for Bitbucket: a pull request pipeline diffs from
+  `BITBUCKET_PR_DESTINATION_COMMIT`; a branch pipeline finds the merged pull request among the recently
+  merged ones by merge commit, skips scheduled pipelines (from the pipeline's trigger, best effort), and
+  recognises fast-forward and rebase merges by matching the pull request's commit messages. `index.ts` is
+  the only place that branches on the provider: it picks the providers from the
   config, builds links (PR, file line, catalog tree), and words provider-specific messages
   (`describeSettings`, `catalogAccessNextStep`), so workflows never check which host they're on.
-- `src/utils/git.ts` — `gitConfigEnv`, for passing git config (credentials) through the environment.
+- `src/utils/git.ts` — `gitConfigEnv`, for passing git config (credentials) through the environment, and
+  the small git helpers the CI providers share (`git`, `resolveCommit`, `commitParents`).
 - `src/utils/pull-requests/catalog-pr.ts` — catalog git commit/push, branch naming, and the catalog PR
   body, through the catalog provider.
 - `src/utils/pull-requests/reporter.ts` — source PR comment formatting and upserts, through the source
@@ -210,7 +224,8 @@ The `adr-compliance` workflow is read-only and does the following:
 
 All workflows can run while a pull request is open or once it merges (`pullRequestState` in
 `src/config.ts`, from the event's `action` and `pull_request.merged` on GitHub; in Azure Pipelines a
-`PullRequest` build is open and any other build of the target branch is a merge). A pull request closed without
+`PullRequest` build is open and any other build of the target branch is a merge; in Bitbucket Pipelines a
+pull request pipeline is open and a branch pipeline is a merge). A pull request closed without
 merging is skipped without a comment, so a workflow on `types: [closed]` is safe without an `if`.
 
 In Azure Pipelines, `resolveConfig` reads the source pull request from the predefined variables
@@ -221,11 +236,18 @@ scheduled build, or a direct push no completed pull request merged) gets `config
 workflow skips it quietly with the `no_pull_request` outcome. `azureDevOpsOrganization` (the pipeline's
 organization and project) is set in any Azure run, so short catalog names (`Project/Repo`) resolve even
 without a source pull request. The catalog
-provider (`config.catalogProvider`) is explicit, or inferred from an Azure Repos URL in `catalog-repo`,
-or from the CI system.
+provider (`config.catalogProvider`) is explicit, or inferred from an Azure Repos or Bitbucket URL in
+`catalog-repo`, or from the CI system.
 
-The catalog checkout path is intentionally `eventcatalog/` under the workspace (`$GITHUB_WORKSPACE`, or
-`$(Build.SourcesDirectory)` in Azure Pipelines). In TypeScript,
+In Bitbucket Pipelines, `resolveConfig` reads the pull request from the default variables
+(`BITBUCKET_BUILD_NUMBER`, `BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_COMMIT`,
+`BITBUCKET_PR_ID`, `BITBUCKET_PR_DESTINATION_COMMIT`, `BITBUCKET_PIPELINE_UUID`) into `config.bitbucket`,
+with the token from `EVENTCATALOG_BITBUCKET_TOKEN` (Pipelines has no built-in API token; the run fails
+early without one). That token is also the catalog token for a Bitbucket catalog unless
+`EVENTCATALOG_CATALOG_TOKEN` is set. A tag pipeline gets `config.skipReason`.
+
+The catalog checkout path is intentionally `eventcatalog/` under the workspace (`$GITHUB_WORKSPACE`,
+`$(Build.SourcesDirectory)` in Azure Pipelines, or `$BITBUCKET_CLONE_DIR` in Bitbucket Pipelines). In TypeScript,
 always resolve it through `resolveCatalogPath(config)` before passing it to SDKs, tools, or git
 operations.
 
@@ -246,7 +268,9 @@ operations.
 The Azure Pipelines template takes the same settings as camelCase parameters (`catalogRepo`,
 `catalogRef`, `catalogToken`, …), plus `catalogProvider` (`azure-devops` or `github`), `agentsVersion`
 (the tag of this repository to run), and `env` (the agent's environment, for provider keys). There is no
-GitHub App option there; `catalogToken` defaults to `$(System.AccessToken)`.
+GitHub App option there; `catalogToken` defaults to `$(System.AccessToken)`. The Bitbucket script takes
+them as kebab-case options (`--catalog-repo`, `--adrs`, …, and `--source-dir` for the workspace, since
+"workspace" means something else in Bitbucket); its tokens are secured variables.
 
 Provider keys are supplied through normal workflow env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `OPENROUTER_API_KEY`). Analytics can be disabled with `POSTHOG_KEY: ""`.
@@ -299,6 +323,8 @@ Agents are synchronous functions composed with hooks (`useModel`, `useSandbox`, 
 - Be careful with path handling in composite actions: `$GITHUB_ACTION_PATH` is the action package,
   while `$GITHUB_WORKSPACE` is the source repository checkout. In the Azure template, the agents live in
   `$(Agent.TempDirectory)/eventcatalog-agents` and the source checkout is `$(Build.SourcesDirectory)`.
+- In the Bitbucket script, the agents live in `/tmp/eventcatalog-agents` (wherever the step cloned them)
+  and the source checkout is `$BITBUCKET_CLONE_DIR`.
 - Pass git credentials through the environment (`gitConfigEnv`), never as command-line arguments: a
   failed command's error message prints its arguments, and Azure Pipelines masks only the raw token, not
   an encoded auth header.

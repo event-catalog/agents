@@ -1,7 +1,7 @@
 import type { AzureDevOpsOrganization, AzureDevOpsReviewTarget, ReviewConfig } from '@/src/config';
 import { gitConfigEnv } from '@/src/utils/git';
 import { sendWithRetry } from '@/src/providers/http';
-import { COMMENT_MARKER_LINE, fitLength, fitMarkdown, withoutGithubExtensions } from '@/src/providers/markdown';
+import { fitLength, fitMarkdown, replaceCommentMarker, withoutGithubExtensions } from '@/src/providers/markdown';
 import type {
   AgentPullRequestStats,
   CatalogPreflightResult,
@@ -11,9 +11,6 @@ import type {
   SourcePullRequestProvider,
   UpsertCommentOptions,
 } from '@/src/providers/types';
-
-export { retryOptions } from '@/src/providers/http';
-export { fitMarkdown } from '@/src/providers/markdown';
 
 /**
  * Azure DevOps (Azure Repos): pull request threads and catalog pull requests, through the REST API.
@@ -204,7 +201,7 @@ export const azureSourceRepository = (target: AzureDevOpsReviewTarget): AzureRep
 
 /** GitHub markdown as Azure DevOps renders it. The marker that finds the comment lives in a thread property instead. */
 export const toAzureDevOpsMarkdown = (markdown: string): string =>
-  withoutGithubExtensions(markdown.replace(COMMENT_MARKER_LINE, ''));
+  withoutGithubExtensions(replaceCommentMarker(markdown, () => ''));
 
 // --- Source pull request -------------------------------------------------------------------------------
 

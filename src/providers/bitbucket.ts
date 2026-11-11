@@ -1,11 +1,12 @@
 import type { BitbucketReviewTarget, ReviewConfig } from '@/src/config';
 import { sendWithRetry } from '@/src/providers/http';
-import { COMMENT_MARKER_LINE, fitLength, fitMarkdown, markerId, withoutGithubExtensions } from '@/src/providers/markdown';
+import { fitLength, fitMarkdown, markerId, replaceCommentMarker, withoutGithubExtensions } from '@/src/providers/markdown';
 import type {
   AgentPullRequestStats,
   CatalogPreflightResult,
   CatalogPullRequestInput,
   CatalogRepositoryProvider,
+  CommentTone,
   SourcePullRequestProvider,
   UpsertCommentOptions,
 } from '@/src/providers/types';
@@ -35,10 +36,16 @@ export interface BitbucketRepository {
 
 const SLUG = /^[\w.-]+$/;
 
+/** A Bitbucket Cloud repository URL, with or without the scheme and a user name. */
+const BITBUCKET_URL = /^(https?:\/\/)?([^@/:]+@)?bitbucket\.org\//i;
+
+/** Whether the `catalog-repo` setting is a Bitbucket repository URL. */
+export const isBitbucketUrl = (value: string): boolean => BITBUCKET_URL.test(value.trim());
+
 /**
  * Reads a Bitbucket repository from the `catalog-repo` setting: `workspace/repo`, just `repo` (in the
- * pipeline's own workspace), or a URL such as `https://bitbucket.org/workspace/repo` or the clone URL
- * `https://user@bitbucket.org/workspace/repo.git`.
+ * pipeline's own workspace), or a URL such as `https://bitbucket.org/workspace/repo`, the clone URL
+ * `https://user@bitbucket.org/workspace/repo.git`, or either without `https://`.
  */
 export const parseBitbucketRepository = (
   value: string | undefined,
@@ -47,17 +54,18 @@ export const parseBitbucketRepository = (
   let trimmed = value?.trim().replace(/\/+$/, '');
   if (!trimmed) return undefined;
 
-  if (/^https?:\/\//i.test(trimmed)) {
+  if (isBitbucketUrl(trimmed)) {
     let url: URL;
     try {
-      url = new URL(trimmed);
+      url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
     } catch {
       return undefined;
     }
-    if (url.hostname.toLowerCase() !== 'bitbucket.org') return undefined;
     // Only the path is read, so the user name in a copied clone URL is dropped.
     const [workspace, repository] = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
     trimmed = workspace && repository ? `${workspace}/${repository}` : '';
+  } else if (/^https?:\/\//i.test(trimmed)) {
+    return undefined;
   }
 
   const parts = trimmed.replace(/\.git$/, '').split('/');
@@ -72,6 +80,11 @@ const isApiToken = (token: string): boolean => token.includes(':');
 export const bitbucketAuthorization = (token: string): string =>
   isApiToken(token) ? `Basic ${Buffer.from(token).toString('base64')}` : `Bearer ${token}`;
 
+const repositoryPath = ({ workspace, repository }: BitbucketRepository): string =>
+  `${encodeURIComponent(workspace)}/${encodeURIComponent(repository)}`;
+
+const cloneUrl = (repository: BitbucketRepository): string => `${WEB_URL}/${repositoryPath(repository)}.git`;
+
 /** Credentials for `git` against one repository, through the environment rather than the command line. */
 const bitbucketGitEnv = (repository: BitbucketRepository, token: string): Record<string, string> => {
   // Bitbucket's documented git user names: `x-token-auth` for access tokens, and a fixed one for API tokens.
@@ -83,22 +96,31 @@ const bitbucketGitEnv = (repository: BitbucketRepository, token: string): Record
   ]);
 };
 
-const repositoryPath = ({ workspace, repository }: BitbucketRepository): string =>
-  `${encodeURIComponent(workspace)}/${encodeURIComponent(repository)}`;
+// --- REST API ------------------------------------------------------------------------------------------
 
-const apiUrl = (repository: BitbucketRepository, path: string, query: Record<string, string> = {}): string => {
-  const search = new URLSearchParams(query).toString();
-  return `${API_URL}/repositories/${repositoryPath(repository)}${path}${search ? `?${search}` : ''}`;
+type Query = Record<string, string | string[]>;
+
+type RequestOptions = {
+  query?: Query;
+  body?: unknown;
+  /** Whether a server error can be retried. Every method but POST is; a POST could create twice. */
+  safeToRepeat?: boolean;
 };
 
-const cloneUrl = (repository: BitbucketRepository): string => `${WEB_URL}/${repositoryPath(repository)}.git`;
+const apiUrl = (repository: BitbucketRepository, path: string, query: Query = {}): string => {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    for (const item of Array.isArray(value) ? value : [value]) search.append(key, item);
+  }
+  const queryString = search.toString();
+  return `${API_URL}/repositories/${repositoryPath(repository)}${path}${queryString ? `?${queryString}` : ''}`;
+};
 
 const request = async <T>(
   token: string,
   method: string,
   url: string,
-  body?: unknown,
-  { safeToRepeat = method !== 'POST' }: { safeToRepeat?: boolean } = {}
+  { body, safeToRepeat = method !== 'POST' }: Omit<RequestOptions, 'query'> = {}
 ): Promise<T> => {
   const send = () =>
     fetch(url, {
@@ -117,8 +139,11 @@ const request = async <T>(
   if (!response.ok) {
     let detail = response.statusText;
     try {
-      const parsed = JSON.parse(text) as { error?: { message?: string; detail?: unknown } };
-      detail = parsed.error?.message || detail;
+      const { error } = JSON.parse(text) as { error?: { message?: string; detail?: unknown } };
+      // Bitbucket often puts the useful part in `detail`, such as the field a request got wrong.
+      detail = [error?.message || detail, typeof error?.detail === 'string' ? error.detail : undefined]
+        .filter(Boolean)
+        .join(': ');
     } catch {
       // Keep the status text.
     }
@@ -134,20 +159,26 @@ const request = async <T>(
 
 type Page<T> = { values: T[]; next?: string };
 
+/** The API for one repository: `call('PUT', '/pullrequests/4', { body })`, and paginated lists. */
+const repositoryApi = (token: string, repository: BitbucketRepository) => ({
+  call: <T>(method: string, path: string, { query, ...options }: RequestOptions = {}): Promise<T> =>
+    request<T>(token, method, apiUrl(repository, path, query), options),
+
+  /** Every item of a paginated list, up to `MAX_PAGES` pages. */
+  async listAll<T>(path: string, query?: Query): Promise<T[]> {
+    const items: T[] = [];
+    let next: string | undefined = apiUrl(repository, path, query);
+    for (let page = 0; next && page < MAX_PAGES; page++) {
+      const result: Page<T> = await request<Page<T>>(token, 'GET', next);
+      items.push(...result.values);
+      next = result.next;
+    }
+    return items;
+  },
+});
+
 /** A string in a Bitbucket query (`q=`), quoted. */
 const bbqlString = (value: string): string => `"${value.replace(/["\\]/g, '')}"`;
-
-/** Every item of a paginated list, up to `MAX_PAGES` pages. */
-const listAll = async <T>(token: string, url: string): Promise<T[]> => {
-  const items: T[] = [];
-  let next: string | undefined = url;
-  for (let page = 0; next && page < MAX_PAGES; page++) {
-    const result: Page<T> = await request<Page<T>>(token, 'GET', next);
-    items.push(...result.values);
-    next = result.next;
-  }
-  return items;
-};
 
 // --- Links -------------------------------------------------------------------------------------------
 
@@ -170,7 +201,7 @@ export const bitbucketSourceRepository = (target: BitbucketReviewTarget): Bitbuc
  * becomes a markdown reference definition, which keeps it in the comment's source but out of sight.
  */
 export const toBitbucketMarkdown = (markdown: string): string =>
-  withoutGithubExtensions(markdown.replace(COMMENT_MARKER_LINE, (_, id: string) => `[//]: # (${id})\n\n`));
+  withoutGithubExtensions(replaceCommentMarker(markdown, (id) => `[//]: # (${id})\n\n`));
 
 // --- Source pull request -------------------------------------------------------------------------------
 
@@ -194,26 +225,29 @@ export const requireBitbucketToken = (target: Pick<BitbucketReviewTarget, 'token
   return target.token;
 };
 
-export const createBitbucketSource = (target: BitbucketReviewTarget & { prNumber: number }): SourcePullRequestProvider => {
-  const token = requireBitbucketToken(target);
-  const repository = bitbucketSourceRepository(target);
-  const pullRequestUrl = bitbucketPullRequestUrl(repository, target.prNumber);
-  const url = (path: string, query?: Record<string, string>) =>
-    apiUrl(repository, `/pullrequests/${target.prNumber}${path}`, query);
-  const call = <T>(method: string, path: string, body?: unknown) => request<T>(token, method, url(path), body);
+/**
+ * What a comment's tone does to its resolved state: an ADR warning that no longer applies is resolved,
+ * and a warning reopens the comment if someone resolved it. Information leaves it as people left it.
+ */
+const RESOLUTION: Record<CommentTone, 'resolve' | 'reopen' | undefined> = {
+  resolved: 'resolve',
+  warning: 'reopen',
+  info: undefined,
+};
 
-  /**
-   * Resolves an ADR warning that no longer applies, and reopens a comment that has a warning again.
-   * Resolving is best effort: the comment's text already says whether the warning applies.
-   */
-  const syncResolution = async (comment: Comment, resolve: boolean) => {
-    if (resolve === Boolean(comment.resolution)) return;
+export const createBitbucketSource = (target: BitbucketReviewTarget & { prNumber: number }): SourcePullRequestProvider => {
+  const api = repositoryApi(requireBitbucketToken(target), bitbucketSourceRepository(target));
+  const pullRequestPath = `/pullrequests/${target.prNumber}`;
+  const pullRequestUrl = bitbucketPullRequestUrl(bitbucketSourceRepository(target), target.prNumber);
+
+  /** Best effort: the comment's text already says whether the warning applies. */
+  const syncResolution = async (comment: Comment, tone: CommentTone) => {
+    const change = RESOLUTION[tone];
+    if (!change || (change === 'resolve') === Boolean(comment.resolution)) return;
     try {
-      await call(resolve ? 'POST' : 'DELETE', `/comments/${comment.id}/resolve`);
+      await api.call(change === 'resolve' ? 'POST' : 'DELETE', `${pullRequestPath}/comments/${comment.id}/resolve`);
     } catch (error) {
-      console.error(
-        `[eventcatalog:bitbucket] Could not ${resolve ? 'resolve' : 'reopen'} the comment: ${(error as Error).message}`
-      );
+      console.error(`[eventcatalog:bitbucket] Could not ${change} the comment: ${(error as Error).message}`);
     }
   };
 
@@ -223,14 +257,16 @@ export const createBitbucketSource = (target: BitbucketReviewTarget & { prNumber
     async upsertComment(marker: string, body: string, { onlyUpdateExisting = false, tone }: UpsertCommentOptions) {
       const raw = toBitbucketMarkdown(body);
       const tag = `(${markerId(marker)})`;
-      const comments = await listAll<Comment>(token, url('/comments', { pagelen: '100' }));
+      const comments = await api.listAll<Comment>(`${pullRequestPath}/comments`, { pagelen: '100' });
       const existing = comments.find(
         (comment) => !comment.deleted && !comment.parent && !comment.inline && comment.content?.raw?.includes(tag)
       );
 
       if (existing) {
-        const updated = await call<Comment>('PUT', `/comments/${existing.id}`, { content: { raw } });
-        await syncResolution(existing, tone === 'resolved');
+        const updated = await api.call<Comment>('PUT', `${pullRequestPath}/comments/${existing.id}`, {
+          body: { content: { raw } },
+        });
+        await syncResolution(existing, tone);
         const link = updated?.links?.html?.href ?? `${pullRequestUrl}#comment-${existing.id}`;
         console.error(`[eventcatalog:bitbucket] Updated pull request comment: ${link}`);
         return link;
@@ -238,14 +274,14 @@ export const createBitbucketSource = (target: BitbucketReviewTarget & { prNumber
 
       if (onlyUpdateExisting) return undefined;
 
-      const created = await call<Comment>('POST', '/comments', { content: { raw } });
+      const created = await api.call<Comment>('POST', `${pullRequestPath}/comments`, { body: { content: { raw } } });
       const link = created.links?.html?.href ?? `${pullRequestUrl}#comment-${created.id}`;
       console.error(`[eventcatalog:bitbucket] Created pull request comment: ${link}`);
       return link;
     },
 
     async getDescription() {
-      const pullRequest = await call<{ description?: string }>('GET', '');
+      const pullRequest = await api.call<{ description?: string }>('GET', pullRequestPath);
       return pullRequest.description || undefined;
     },
   };
@@ -257,6 +293,7 @@ type PullRequest = {
   source?: { branch?: { name?: string }; commit?: { hash?: string } };
   destination?: { branch?: { name?: string }; commit?: { hash?: string } };
   merge_commit?: { hash?: string } | null;
+  reviewers?: { uuid?: string }[];
   updated_on?: string;
   links?: { html?: { href?: string } };
 };
@@ -268,32 +305,48 @@ export const sameCommit = (a: string | undefined, b: string | undefined): boolea
 /**
  * The pull request that merged into `branch` as `commit`: how a pipeline of the target branch after a
  * merge finds the pull request to comment on. Bitbucket has no lookup by merge commit, so this checks
- * the pull requests merged into the branch most recently. Undefined for a direct push.
+ * the 50 pull requests merged into the branch most recently. Undefined for a direct push.
  */
 export const findMergedPullRequest = async (
   target: BitbucketReviewTarget,
   commit: string,
   branch: string
-): Promise<{ prNumber: number; sourceCommit?: string; destinationCommit?: string } | undefined> => {
-  const token = requireBitbucketToken(target);
-  const { values } = await request<Page<PullRequest>>(
-    token,
-    'GET',
-    apiUrl(bitbucketSourceRepository(target), '/pullrequests', {
-      state: 'MERGED',
-      q: `destination.branch.name = ${bbqlString(branch)}`,
-      sort: '-updated_on',
-      pagelen: '50',
-    })
-  );
+): Promise<{ prNumber: number } | undefined> => {
+  const api = repositoryApi(requireBitbucketToken(target), bitbucketSourceRepository(target));
+  const { values } = await api.call<Page<PullRequest>>('GET', '/pullrequests', {
+    query: { state: 'MERGED', q: `destination.branch.name = ${bbqlString(branch)}`, sort: '-updated_on', pagelen: '50' },
+  });
   const pullRequest = values.find((candidate) => sameCommit(candidate.merge_commit?.hash, commit));
-  return pullRequest
-    ? {
-        prNumber: pullRequest.id,
-        sourceCommit: pullRequest.source?.commit?.hash,
-        destinationCommit: pullRequest.destination?.commit?.hash,
-      }
-    : undefined;
+  return pullRequest ? { prNumber: pullRequest.id } : undefined;
+};
+
+/** The messages of a pull request's commits, newest first. */
+export const getPullRequestCommitMessages = async (target: BitbucketReviewTarget, prNumber: number): Promise<string[]> => {
+  const api = repositoryApi(requireBitbucketToken(target), bitbucketSourceRepository(target));
+  const commits = await api.listAll<{ message?: string }>(`/pullrequests/${prNumber}/commits`, { pagelen: '100' });
+  return commits.map((commit) => commit.message ?? '');
+};
+
+/**
+ * What started this pipeline (`schedule`, `push`, `manual`), from `BITBUCKET_PIPELINE_UUID`, as no
+ * variable says. Reading it needs the token's Pipelines: Read permission, so when it can't be read the
+ * pipeline is taken to be a push.
+ */
+export const getPipelineTrigger = async (target: BitbucketReviewTarget): Promise<string | undefined> => {
+  if (!target.pipeline) return undefined;
+  const api = repositoryApi(requireBitbucketToken(target), bitbucketSourceRepository(target));
+  try {
+    const pipeline = await api.call<{ trigger?: { type?: string; name?: string } }>(
+      'GET',
+      `/pipelines/${encodeURIComponent(target.pipeline)}`
+    );
+    // `pipeline_trigger_schedule` → `schedule`; older responses have only a name such as `SCHEDULE`.
+    const trigger = pipeline.trigger?.type?.replace(/^pipeline_trigger_/, '') ?? pipeline.trigger?.name;
+    return trigger?.toLowerCase();
+  } catch (error) {
+    console.error(`[eventcatalog:bitbucket] Could not read what started the pipeline: ${(error as Error).message}`);
+    return undefined;
+  }
 };
 
 // --- Catalog repository --------------------------------------------------------------------------------
@@ -315,8 +368,7 @@ export const createBitbucketCatalog = (
 
   const token = config.catalogToken;
   const name = `${repository.workspace}/${repository.repository}`;
-  const call = <T>(method: string, path: string, query?: Record<string, string>, body?: unknown) =>
-    request<T>(token, method, apiUrl(repository, path, query), body);
+  const api = repositoryApi(token, repository);
 
   return {
     name: 'bitbucket',
@@ -324,7 +376,7 @@ export const createBitbucketCatalog = (
     async preflight(ref: string): Promise<CatalogPreflightResult> {
       let fullName = name;
       try {
-        fullName = (await call<{ full_name?: string }>('GET', '')).full_name ?? name;
+        fullName = (await api.call<{ full_name?: string }>('GET', '')).full_name ?? name;
       } catch (error) {
         throw Object.assign(new Error(`Catalog token cannot access ${name}: ${(error as Error).message}`), {
           status: (error as { status?: number }).status,
@@ -332,7 +384,7 @@ export const createBitbucketCatalog = (
       }
 
       try {
-        const branch = await call<{ target?: { hash?: string } }>(
+        const branch = await api.call<{ target?: { hash?: string } }>(
           'GET',
           `/refs/branches/${ref.split('/').map(encodeURIComponent).join('/')}`
         );
@@ -355,42 +407,56 @@ export const createBitbucketCatalog = (
         '\n\n_…shortened to fit in a Bitbucket pull request description._'
       );
       const fittedTitle = fitLength(title, MAX_TITLE_LENGTH, '…');
-      const { values: existing } = await call<Page<PullRequest>>('GET', '/pullrequests', {
-        state: 'OPEN',
-        q: `source.branch.name = ${bbqlString(branch)} AND destination.branch.name = ${bbqlString(base)}`,
+      const { values: existing } = await api.call<Page<PullRequest>>('GET', '/pullrequests', {
+        query: {
+          state: 'OPEN',
+          q: `source.branch.name = ${bbqlString(branch)} AND destination.branch.name = ${bbqlString(base)}`,
+        },
       });
 
       if (existing[0]) {
-        const updated = await call<PullRequest>('PUT', `/pullrequests/${existing[0].id}`, undefined, {
-          title: fittedTitle,
-          description,
+        const path = `/pullrequests/${existing[0].id}`;
+        // An update without `reviewers` can remove the reviewers people added, so send them back as they are.
+        const { reviewers = [] } = await api.call<PullRequest>('GET', path);
+        const updated = await api.call<PullRequest>('PUT', path, {
+          body: {
+            title: fittedTitle,
+            description,
+            reviewers: reviewers.filter((reviewer) => reviewer.uuid).map(({ uuid }) => ({ uuid })),
+          },
         });
         const url = updated?.links?.html?.href ?? bitbucketPullRequestUrl(repository, existing[0].id);
         console.error(`[eventcatalog:catalog-pr] Updated catalog pull request: ${url}`);
         return url;
       }
 
-      const created = await call<PullRequest>('POST', '/pullrequests', undefined, {
-        title: fittedTitle,
-        description,
-        source: { branch: { name: branch } },
-        destination: { branch: { name: base } },
-        close_source_branch: true,
+      const created = await api.call<PullRequest>('POST', '/pullrequests', {
+        body: {
+          title: fittedTitle,
+          description,
+          source: { branch: { name: branch } },
+          destination: { branch: { name: base } },
+          close_source_branch: true,
+        },
       });
       const url = created.links?.html?.href ?? bitbucketPullRequestUrl(repository, created.id);
       console.error(`[eventcatalog:catalog-pr] Created catalog pull request: ${url}`);
       return url;
     },
 
+    /**
+     * Counts from the 50 agent pull requests updated most recently, which is plenty for the signal. Without
+     * a state, Bitbucket lists only open pull requests.
+     */
     async getAgentPullRequestStats(branchPrefix: string): Promise<AgentPullRequestStats> {
-      // Without a state, Bitbucket lists only open pull requests.
-      const query = new URLSearchParams({
-        q: `source.branch.name ~ ${bbqlString(branchPrefix)}`,
-        sort: '-updated_on',
-        pagelen: '50',
+      const { values } = await api.call<Page<PullRequest>>('GET', '/pullrequests', {
+        query: {
+          q: `source.branch.name ~ ${bbqlString(branchPrefix)}`,
+          state: ['OPEN', 'MERGED', 'DECLINED'],
+          sort: '-updated_on',
+          pagelen: '50',
+        },
       });
-      for (const state of ['OPEN', 'MERGED', 'DECLINED']) query.append('state', state);
-      const { values } = await request<Page<PullRequest>>(token, 'GET', `${apiUrl(repository, '/pullrequests')}?${query}`);
 
       const since = Date.now() - 30 * 24 * 60 * 60 * 1000;
       const recent = (date: string | undefined) => Boolean(date && Date.parse(date) >= since);

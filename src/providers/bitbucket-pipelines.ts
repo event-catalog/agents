@@ -1,35 +1,16 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import type { BitbucketReviewTarget, ReviewConfig } from '@/src/config';
-import { findMergedPullRequest, requireBitbucketToken, sameCommit } from '@/src/providers/bitbucket';
+import {
+  findMergedPullRequest,
+  getPipelineTrigger,
+  getPullRequestCommitMessages,
+  requireBitbucketToken,
+} from '@/src/providers/bitbucket';
+import { commitParents, git, resolveCommit } from '@/src/utils/git';
 
 /**
  * What a Bitbucket pipeline needs from git and the API before it can review: the commits to diff, and
  * for a pipeline of the target branch after a merge, the pull request that merged.
  */
-
-const execFileAsync = promisify(execFile);
-
-const git = async (workspace: string, args: string[]): Promise<string> =>
-  (await execFileAsync('git', ['-C', workspace, ...args])).stdout.trim();
-
-/** The full hash of `ref` when the checkout has that commit (Bitbucket's hashes can be abbreviated). */
-const resolveCommit = (workspace: string, ref: string | undefined): Promise<string | undefined> =>
-  ref
-    ? git(workspace, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).then(
-        (sha) => sha || undefined,
-        () => undefined
-      )
-    : Promise.resolve(undefined);
-
-const isAncestor = (workspace: string, ancestor: string, commit: string): Promise<boolean> =>
-  git(workspace, ['merge-base', '--is-ancestor', ancestor, commit]).then(
-    () => true,
-    () => false
-  );
-
-const parents = async (workspace: string, ref: string): Promise<string[]> =>
-  (await git(workspace, ['rev-list', '--parents', '-n', '1', ref])).split(/\s+/).slice(1);
 
 const SHALLOW_CLONE =
   'Cannot find the commits to compare. Clone the repository in full (`clone: depth: full` on the step) so the agent can diff the pull request.';
@@ -47,7 +28,7 @@ const resolvePullRequestRange = async (
   let baseSha = await resolveCommit(workspace, target.destinationCommit);
 
   if (!baseSha) {
-    const [first, second] = await parents(workspace, 'HEAD').catch(() => []);
+    const [first, second] = await commitParents(workspace, 'HEAD').catch(() => []);
     if (second && first === headSha) baseSha = second;
   }
 
@@ -55,13 +36,59 @@ const resolvePullRequestRange = async (
   return { baseSha, headSha };
 };
 
+const normaliseMessage = (message: string): string => message.replace(/\r\n/g, '\n').trim();
+
 /**
- * After a merge: finds the pull request that merged first, so a direct push is skipped before anything
- * needs the history. A merge commit or squashed commit diffs against its first parent, the target branch
- * before the change. A fast-forward merge has no such commit, so it diffs from the target branch commit
- * the pull request was opened against.
+ * Where the pull request's changes start, below the commit the target branch is at after the merge.
+ *
+ * - A merge commit (two parents): its first parent, the target branch before the merge.
+ * - One commit (a squash, or a pull request of one commit): its parent.
+ * - Several commits added to the target branch as they are (fast-forward, or rebase and fast-forward):
+ *   below the last of them. Bitbucket doesn't record which strategy merged a pull request, so the
+ *   commits are recognised by their messages, which a rebase keeps: when the last commits on the target
+ *   branch carry the pull request's commit messages, they are its commits. Otherwise it was squashed.
+ */
+const resolveMergedRange = async (
+  workspace: string,
+  target: BitbucketReviewTarget & { prNumber: number },
+  commit: string
+): Promise<string> => {
+  const [firstParent, secondParent] = await commitParents(workspace, commit).catch(() => []);
+  if (!firstParent) throw new Error(SHALLOW_CLONE);
+  if (secondParent) return firstParent;
+
+  const messages = await getPullRequestCommitMessages(target, target.prNumber).catch((error: Error) => {
+    console.error(`[eventcatalog:bitbucket] Could not list the pull request's commits: ${error.message}`);
+    return undefined;
+  });
+  const count = messages?.length ?? 0;
+  if (count <= 1) return firstParent;
+
+  const onBranch = (await git(workspace, ['log', '--first-parent', `-n${count}`, '--format=%B%x00', commit]))
+    .split('\0')
+    .map(normaliseMessage)
+    .filter(Boolean);
+  const sorted = (values: string[]) => values.map(normaliseMessage).sort().join('\0');
+  if (onBranch.length !== count || sorted(onBranch) !== sorted(messages ?? [])) return firstParent;
+
+  const base = await resolveCommit(workspace, `${commit}~${count}`);
+  if (!base) throw new Error(SHALLOW_CLONE);
+  return base;
+};
+
+/**
+ * After a merge: skips a scheduled pipeline, which isn't about a merge, then finds the pull request that
+ * merged, so a direct push is skipped before anything needs the history.
  */
 const resolveMergedPullRequest = async (config: ReviewConfig, target: BitbucketReviewTarget): Promise<ReviewConfig> => {
+  const trigger = await getPipelineTrigger(target);
+  if (trigger === 'schedule') {
+    return {
+      ...config,
+      skipReason: 'This Bitbucket pipeline ran on a schedule, not after a merge, so there is nothing to review.',
+    };
+  }
+
   const commit = (await resolveCommit(config.workspace, target.commit)) ?? (await git(config.workspace, ['rev-parse', 'HEAD']));
   const branch = target.branch;
   const merged = branch ? await findMergedPullRequest(target, commit, branch) : undefined;
@@ -74,21 +101,11 @@ const resolveMergedPullRequest = async (config: ReviewConfig, target: BitbucketR
   }
 
   console.error(`[eventcatalog:bitbucket] Commit ${commit.slice(0, 12)} was merged by pull request #${merged.prNumber}`);
-  const withPullRequest = { ...config, bitbucket: { ...target, prNumber: merged.prNumber } };
-  if (config.baseSha && config.headSha) return withPullRequest;
+  const withPullRequest = { ...target, prNumber: merged.prNumber };
+  if (config.baseSha && config.headSha) return { ...config, bitbucket: withPullRequest };
 
-  const [firstParent, secondParent] = await parents(config.workspace, commit).catch(() => []);
-  if (!firstParent) throw new Error(SHALLOW_CLONE);
-
-  let baseSha = firstParent;
-  if (!secondParent && sameCommit(merged.sourceCommit, commit)) {
-    const destination = await resolveCommit(config.workspace, merged.destinationCommit);
-    if (destination && destination !== commit && (await isAncestor(config.workspace, destination, commit))) {
-      baseSha = destination;
-    }
-  }
-
-  return { ...withPullRequest, baseSha, headSha: commit };
+  const baseSha = await resolveMergedRange(config.workspace, withPullRequest, commit);
+  return { ...config, bitbucket: withPullRequest, baseSha, headSha: commit };
 };
 
 export const resolveBitbucketPipelinesContext = async (config: ReviewConfig): Promise<ReviewConfig> => {

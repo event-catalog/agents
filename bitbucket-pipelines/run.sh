@@ -13,6 +13,7 @@
 #         - git clone --quiet --depth 1 --branch v2 https://github.com/event-catalog/agents.git /tmp/eventcatalog-agents
 #         - /tmp/eventcatalog-agents/bitbucket-pipelines/run.sh breaking-changes --catalog-repo acme/eventcatalog
 #
+# usage:start
 # Options (all but the agent are optional, except --catalog-repo, and --adrs for adr-compliance):
 #   <agent>                    code-to-docs, breaking-changes or adr-compliance
 #   --catalog-repo <repo>      the EventCatalog repository: `workspace/repo` (or `repo` in this workspace),
@@ -30,13 +31,17 @@
 #   EVENTCATALOG_BITBUCKET_TOKEN  an access token for this repository, with Pull requests: Write
 #   EVENTCATALOG_CATALOG_TOKEN    a token for the catalog repository, if EVENTCATALOG_BITBUCKET_TOKEN can't reach it
 #   ANTHROPIC_API_KEY (or OPENAI_API_KEY, OPENROUTER_API_KEY, …) for your model provider
+# usage:end
+#
+# A branch pipeline reviews the pull request that merged as its commit. A scheduled pipeline is skipped
+# when the token can read what started it (Pipelines: Read); otherwise it reviews that pull request again.
 
 set -euo pipefail
 
 AGENTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
-  sed -n '16,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  sed -n '/^# usage:start$/,/^# usage:end$/p' "${BASH_SOURCE[0]}" | sed '1d;$d' | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -84,7 +89,13 @@ while [ $# -gt 0 ]; do
     --adrs) export EVENTCATALOG_ADRS="$value" ;;
     --ignore-paths) export EVENTCATALOG_IGNORE_PATHS="$value" ;;
     --schema-extensions) export EVENTCATALOG_SCHEMA_EXTENSIONS="$value" ;;
-    --source-dir) export EVENTCATALOG_WORKSPACE="$value" ;;
+    # Relative to where the step runs, not the agents checkout this script changes into.
+    --source-dir)
+      EVENTCATALOG_WORKSPACE="$(cd "$value" 2> /dev/null && pwd)" || {
+        echo "[eventcatalog] --source-dir: no such directory: $value" >&2
+        exit 2
+      }
+      ;;
     *)
       echo "[eventcatalog] Unknown option: $option" >&2
       usage
@@ -97,7 +108,7 @@ if [ -z "${EVENTCATALOG_CATALOG_REPO:-}" ]; then
   exit 2
 fi
 
-if ! command -v node > /dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
+if ! command -v node > /dev/null || [ "$(node -p 'const [major, minor] = process.versions.node.split(".").map(Number); major > 22 || (major === 22 && minor >= 19)')" != true ]; then
   echo "[eventcatalog] EventCatalog Agents need Node.js 22.19 or later. Run the step in the node:24 image." >&2
   exit 1
 fi

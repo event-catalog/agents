@@ -13,13 +13,9 @@ import {
   getSourcePullRequestInfo,
   resolvePullRequestContext,
 } from '@/src/providers';
-import {
-  azureAuthorization,
-  fitMarkdown,
-  parseAzureRepository,
-  retryOptions,
-  toAzureDevOpsMarkdown,
-} from '@/src/providers/azure-devops';
+import { azureAuthorization, parseAzureRepository, toAzureDevOpsMarkdown } from '@/src/providers/azure-devops';
+import { retryOptions } from '@/src/providers/http';
+import { fitMarkdown } from '@/src/providers/markdown';
 import type { ImpactPlanResponse } from '@/src/review-output';
 import { checkoutCatalog } from '@/src/utils/checkout-catalog';
 import { createOrUpdateCatalogPullRequest, preflightCatalogPullRequestAccess } from '@/src/utils/pull-requests/catalog-pr';

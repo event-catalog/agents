@@ -1,3 +1,4 @@
+import { isBitbucketUrl } from '@/src/providers/bitbucket';
 import { DEFAULT_SCHEMA_EXTENSIONS } from '@/src/utils/schema-detection';
 
 export interface ReviewPayload {
@@ -84,6 +85,8 @@ export interface BitbucketReviewTarget {
   commit?: string;
   /** The pull request's target branch tip when the pipeline started, on a pull request pipeline. */
   destinationCommit?: string;
+  /** The pipeline's id (`BITBUCKET_PIPELINE_UUID`), to find out what started it. */
+  pipeline?: string;
   prNumber?: number;
   /** The repository slug. */
   repository: string;
@@ -255,18 +258,26 @@ const parseAzureDevOpsTarget = (
   };
 };
 
+/** The workspace and repository a Bitbucket pipeline runs in. */
+const bitbucketPipelineRepository = (env: NodeJS.ProcessEnv): { workspace?: string; repository?: string } => {
+  if (!isBitbucketPipelines(env)) return {};
+  const [fullWorkspace, fullRepository] = (env.BITBUCKET_REPO_FULL_NAME ?? '').split('/');
+  return {
+    workspace: env.BITBUCKET_WORKSPACE?.trim() || fullWorkspace || undefined,
+    repository: env.BITBUCKET_REPO_SLUG?.trim() || fullRepository || undefined,
+  };
+};
+
 /** The Bitbucket Cloud pull request this pipeline is for, from the Bitbucket Pipelines default variables. */
 const parseBitbucketTarget = (payload: ReviewPayload, env: NodeJS.ProcessEnv): BitbucketReviewTarget | undefined => {
-  if (!isBitbucketPipelines(env)) return undefined;
-  const [fullWorkspace, fullRepository] = (env.BITBUCKET_REPO_FULL_NAME ?? '').split('/');
-  const workspace = env.BITBUCKET_WORKSPACE?.trim() || fullWorkspace;
-  const repository = env.BITBUCKET_REPO_SLUG?.trim() || fullRepository;
+  const { workspace, repository } = bitbucketPipelineRepository(env);
   if (!workspace || !repository) return undefined;
 
   return {
     branch: env.BITBUCKET_BRANCH || undefined,
     commit: env.BITBUCKET_COMMIT || undefined,
     destinationCommit: env.BITBUCKET_PR_DESTINATION_COMMIT || undefined,
+    pipeline: env.BITBUCKET_PIPELINE_UUID || undefined,
     prNumber: parseOptionalInteger(payload.prNumber ?? env.BITBUCKET_PR_ID),
     repository,
     token: env.EVENTCATALOG_BITBUCKET_TOKEN || undefined,
@@ -290,9 +301,33 @@ const parseCatalogProvider = (payload: ReviewPayload, env: NodeJS.ProcessEnv): S
 
   const catalogRepo = payload.catalogRepo || env.EVENTCATALOG_CATALOG_REPO || '';
   if (catalogRepo.includes('/_git/')) return 'azure-devops';
-  if (/^(https?:\/\/)?([^@/]+@)?bitbucket\.org\//i.test(catalogRepo.trim())) return 'bitbucket';
+  if (isBitbucketUrl(catalogRepo)) return 'bitbucket';
   if (isAzurePipelines(env)) return 'azure-devops';
   return isBitbucketPipelines(env) ? 'bitbucket' : 'github';
+};
+
+/**
+ * Why a CI run has nothing to review, when its CI system says so up front: an Azure Pipelines build
+ * for neither a pull request nor a merge, or a Bitbucket pipeline of a tag. (A scheduled Bitbucket
+ * pipeline is found later, from the API.)
+ */
+const ciSkipReason = (
+  payload: ReviewPayload,
+  env: NodeJS.ProcessEnv,
+  targets: { azureDevOps?: AzureDevOpsReviewTarget; bitbucket?: BitbucketReviewTarget }
+): string | undefined => {
+  if (payload.pullRequestState) return undefined;
+
+  const buildReason = env.BUILD_REASON ?? '';
+  if (targets.azureDevOps && buildReason !== 'PullRequest' && !AZURE_MERGE_BUILD_REASONS.includes(buildReason)) {
+    return `This Azure Pipelines build (reason: ${buildReason || 'unknown'}) is not for a pull request or a merge, so there is nothing to review.`;
+  }
+
+  if (targets.bitbucket && env.BITBUCKET_TAG) {
+    return `This Bitbucket pipeline built the tag ${env.BITBUCKET_TAG}, not a pull request or a merge, so there is nothing to review.`;
+  }
+
+  return undefined;
 };
 
 export const resolveConfig = (payload: ReviewPayload | undefined, env: NodeJS.ProcessEnv): ReviewConfig => {
@@ -304,13 +339,7 @@ export const resolveConfig = (payload: ReviewPayload | undefined, env: NodeJS.Pr
   // A GitHub pull request wins, so an explicit GitHub payload behaves the same everywhere.
   const azureDevOps = github ? undefined : parseAzureDevOpsTarget(p, env, azureDevOpsOrganization);
   const bitbucket = github || azureDevOps ? undefined : parseBitbucketTarget(p, env);
-  const buildReason = env.BUILD_REASON ?? '';
-  const skipReason =
-    azureDevOps && !p.pullRequestState && buildReason !== 'PullRequest' && !AZURE_MERGE_BUILD_REASONS.includes(buildReason)
-      ? `This Azure Pipelines build (reason: ${buildReason || 'unknown'}) is not for a pull request or a merge, so there is nothing to review.`
-      : bitbucket && !p.pullRequestState && env.BITBUCKET_TAG
-        ? `This Bitbucket pipeline built the tag ${env.BITBUCKET_TAG}, not a pull request or a merge, so there is nothing to review.`
-        : undefined;
+  const skipReason = ciSkipReason(p, env, { azureDevOps, bitbucket });
   const catalogProvider = parseCatalogProvider(p, env);
 
   return {
@@ -319,7 +348,7 @@ export const resolveConfig = (payload: ReviewPayload | undefined, env: NodeJS.Pr
     azureDevOpsOrganization,
     baseSha: p.baseSha || env.EVENTCATALOG_BASE_SHA,
     bitbucket,
-    bitbucketWorkspace: isBitbucketPipelines(env) ? env.BITBUCKET_WORKSPACE?.trim() || undefined : undefined,
+    bitbucketWorkspace: bitbucketPipelineRepository(env).workspace,
     catalogPath: p.catalogPath || env.EVENTCATALOG_CATALOG_PATH || 'eventcatalog',
     catalogProvider,
     catalogRef: p.catalogRef || env.EVENTCATALOG_CATALOG_REF || 'main',

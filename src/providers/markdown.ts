@@ -5,8 +5,12 @@
  * them in pull requests, so they show as code blocks.
  */
 
-/** The line that marks the agent's comment (`<!-- eventcatalog-actions:adr-compliance -->`). */
-export const COMMENT_MARKER_LINE = /^<!-- (eventcatalog-actions:[\w-]+) -->\n?/gm;
+/**
+ * Replaces the line that marks the agent's comment (`<!-- eventcatalog-actions:adr-compliance -->`)
+ * with what `replacement` returns for its id (`eventcatalog-actions:adr-compliance`).
+ */
+export const replaceCommentMarker = (markdown: string, replacement: (id: string) => string): string =>
+  markdown.replace(/^<!-- (eventcatalog-actions:[\w-]+) -->\n?/gm, (_, id: string) => replacement(id));
 
 /** The id inside a comment marker: `eventcatalog-actions:adr-compliance`. */
 export const markerId = (marker: string): string => marker.replace(/^<!--\s*|\s*-->$/g, '');

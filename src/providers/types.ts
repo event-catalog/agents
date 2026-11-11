@@ -1,7 +1,7 @@
 import type { SourceControlProvider } from '@/src/config';
 
 /**
- * The agents' only contact with a Git hosting service (GitHub, Azure DevOps). Everything else — diffs,
+ * The agents' only contact with a Git hosting service (GitHub, Azure DevOps, Bitbucket). Everything else — diffs,
  * planning, catalog edits, comment and pull request text — is shared and does not know where it runs.
  *
  * A run has two roles, and each can be on a different provider:
@@ -12,7 +12,8 @@ import type { SourceControlProvider } from '@/src/config';
 /**
  * What a comment says, so a provider can show it the way its users expect. GitHub comments have no
  * state; Azure DevOps opens a thread as active (a warning to look at), closed (for information), or
- * resolved (an earlier warning that no longer applies).
+ * resolved (an earlier warning that no longer applies); Bitbucket resolves a comment whose warning no
+ * longer applies, and reopens it when a warning comes back.
  */
 export type CommentTone = 'info' | 'warning' | 'resolved';
 

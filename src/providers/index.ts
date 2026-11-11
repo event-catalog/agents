@@ -177,8 +177,9 @@ export const catalogAccessNextStep = (config: ReviewConfig): string => {
     return `Give the pipeline's build service (or the ${token}) the Contribute, Create branch, and Contribute to pull requests permissions on ${catalog}.`;
   }
   if (config.catalogProvider === 'bitbucket') {
-    const variable = config.bitbucketWorkspace ? token : `\`${settingName(config, 'catalog-token')}\``;
-    return `Give the access token in ${variable} (or EVENTCATALOG_BITBUCKET_TOKEN, when that is unset) the Repositories: Write and Pull requests: Write permissions on ${catalog}.`;
+    // In Bitbucket Pipelines the source token stands in for an unset catalog token.
+    const fallback = config.bitbucket ? ' (or `EVENTCATALOG_BITBUCKET_TOKEN`, when that is unset)' : '';
+    return `Give the access token in ${token}${fallback} the Repositories: Write and Pull requests: Write permissions on ${catalog}.`;
   }
   const app = config.azureDevOpsOrganization || config.bitbucketWorkspace ? '' : ' (or the GitHub App)';
   return `Give the ${token}${app} read and write access to ${catalog}, with permission to open pull requests.`;
