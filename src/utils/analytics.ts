@@ -1,5 +1,5 @@
 import { PostHog } from 'posthog-node';
-import { CLOSED_WITHOUT_MERGE_MESSAGE, isAzurePipelines, type ReviewConfig } from '@/src/config';
+import { CLOSED_WITHOUT_MERGE_MESSAGE, isAzurePipelines, isBitbucketPipelines, type ReviewConfig } from '@/src/config';
 import { MISSING_CATALOG_MESSAGE } from '@/src/utils/eventcatalog-utils';
 import { getAgentPullRequestStats } from '@/src/utils/pull-requests/catalog-pr';
 
@@ -90,13 +90,13 @@ export function classifyError(error: unknown): ErrorType {
   if (/rate.?limit|\b429\b|overloaded/.test(text)) return 'model_rate_limit';
   if (/structured result|did not submit|submit_|valibot|schema validation|invalid.*output/.test(text))
     return 'invalid_model_output';
-  // `github_access` covers the source control API either way (GitHub or Azure DevOps), so the category
+  // `github_access` covers the source control API whichever it is (GitHub, Azure DevOps, Bitbucket), so the category
   // stays comparable across runs.
   if (
     status === 401 ||
     status === 403 ||
     status === 404 ||
-    /github|octokit|bad credentials|resource not accessible|azure devops|tf\d{6}/.test(text)
+    /github|octokit|bad credentials|resource not accessible|azure devops|tf\d{6}|bitbucket/.test(text)
   ) {
     return 'github_access';
   }
@@ -137,19 +137,23 @@ type RunContext = { model?: string; durationMs: number; trigger: 'pull_request' 
 // the error category, the model, the run duration, the trigger, the repository, the CI system, and counts of the agent's own
 // catalog pull requests — never anything about the contents of the repo.
 /** Where the run happened: the CI system, never anything about the repository's contents. */
-const ciSystem = (): 'github-actions' | 'azure-pipelines' | 'other' =>
-  process.env.GITHUB_ACTIONS === 'true' ? 'github-actions' : isAzurePipelines(process.env) ? 'azure-pipelines' : 'other';
+const ciSystem = (): 'github-actions' | 'azure-pipelines' | 'bitbucket-pipelines' | 'other' => {
+  if (process.env.GITHUB_ACTIONS === 'true') return 'github-actions';
+  if (isAzurePipelines(process.env)) return 'azure-pipelines';
+  return isBitbucketPipelines(process.env) ? 'bitbucket-pipelines' : 'other';
+};
 
 /**
- * The repository's name, as `owner/repo` on GitHub or `project/repo` in Azure DevOps. The Azure DevOps
- * organization is left out on purpose, to send less that identifies the user, even though `project/repo`
- * isn't unique across organizations.
+ * The repository's name, as `owner/repo` on GitHub, `workspace/repo` on Bitbucket (the same shape), or
+ * `project/repo` in Azure DevOps. The Azure DevOps organization is left out on purpose, to send less that
+ * identifies the user, even though `project/repo` isn't unique across organizations.
  */
 const repositoryName = (): string | undefined =>
   process.env.GITHUB_REPOSITORY ||
   (process.env.SYSTEM_TEAMPROJECT && process.env.BUILD_REPOSITORY_NAME
     ? `${process.env.SYSTEM_TEAMPROJECT}/${process.env.BUILD_REPOSITORY_NAME}`
-    : undefined);
+    : undefined) ||
+  (isBitbucketPipelines(process.env) ? process.env.BITBUCKET_REPO_FULL_NAME : undefined);
 
 async function capture(event: string, outcome: string, context: RunContext, extra: Record<string, unknown> = {}) {
   if (!ENABLED) return;

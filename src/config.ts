@@ -1,3 +1,4 @@
+import { isBitbucketUrl } from '@/src/providers/bitbucket';
 import { DEFAULT_SCHEMA_EXTENSIONS } from '@/src/utils/schema-detection';
 
 export interface ReviewPayload {
@@ -17,7 +18,7 @@ export interface ReviewPayload {
   ignorePaths?: string[] | string;
   model?: string;
   prNumber?: number | string;
-  /** The pull request description. When unset, ADR Compliance reads it from GitHub or Azure DevOps. */
+  /** The pull request description. When unset, ADR Compliance reads it from GitHub, Azure DevOps or Bitbucket. */
   pullRequestBody?: string;
   /** `open`, `merged`, or `closed` (closed without merging). Defaults to `open`. */
   pullRequestState?: PullRequestState;
@@ -26,9 +27,9 @@ export interface ReviewPayload {
 }
 
 /** A hosted Git service the agents can read pull requests from and open them in. */
-export type SourceControlProvider = 'github' | 'azure-devops';
+export type SourceControlProvider = 'github' | 'azure-devops' | 'bitbucket';
 
-export const SOURCE_CONTROL_PROVIDERS: SourceControlProvider[] = ['github', 'azure-devops'];
+export const SOURCE_CONTROL_PROVIDERS: SourceControlProvider[] = ['github', 'azure-devops', 'bitbucket'];
 
 /**
  * Where the source pull request is: `open` (opened or updated), `merged`, or `closed` without merging.
@@ -72,6 +73,29 @@ export interface AzureDevOpsReviewTarget extends AzureDevOpsOrganization {
   token: string;
 }
 
+/**
+ * A pull request in Bitbucket Cloud, read from the Bitbucket Pipelines default variables. A pull request
+ * pipeline knows its pull request; a branch pipeline after a merge finds it from the merge commit, so
+ * `prNumber` is unset until `resolvePullRequestContext` looks it up.
+ */
+export interface BitbucketReviewTarget {
+  /** The branch a branch pipeline built: the target branch the pull request merged into. */
+  branch?: string;
+  /** The commit the pipeline built (`BITBUCKET_COMMIT`): the pull request's source commit, or the merge commit. */
+  commit?: string;
+  /** The pull request's target branch tip when the pipeline started, on a pull request pipeline. */
+  destinationCommit?: string;
+  /** The pipeline's id (`BITBUCKET_PIPELINE_UUID`), to find out what started it. */
+  pipeline?: string;
+  prNumber?: number;
+  /** The repository slug. */
+  repository: string;
+  /** An access token that can comment on the repository's pull requests. Checked before use. */
+  token?: string;
+  /** The Bitbucket workspace's slug. */
+  workspace: string;
+}
+
 export interface ReviewConfig {
   /** Globs relative to the catalog root selecting the ADRs that ADR Compliance checks against. */
   adrs: string[];
@@ -84,6 +108,13 @@ export interface ReviewConfig {
    * source pull request.
    */
   azureDevOpsOrganization?: AzureDevOpsOrganization;
+  /** The source pull request when it is in Bitbucket Cloud (Bitbucket Pipelines). */
+  bitbucket?: BitbucketReviewTarget;
+  /**
+   * The Bitbucket workspace of the pipeline running the agent: where a short catalog repository name
+   * (`repo`) is looked up. Set in any Bitbucket Pipelines run.
+   */
+  bitbucketWorkspace?: string;
   catalogPath: string;
   /** Where the catalog repository is hosted, and so where Code-to-Docs opens its pull requests. */
   catalogProvider: SourceControlProvider;
@@ -146,6 +177,9 @@ const parseCommaList = (value: string[] | string | undefined): string[] => {
 /** True when running in Azure Pipelines, which sets `TF_BUILD` on every build. */
 export const isAzurePipelines = (env: NodeJS.ProcessEnv): boolean => env.TF_BUILD?.toLowerCase() === 'true';
 
+/** True when running in Bitbucket Pipelines, which numbers every build. */
+export const isBitbucketPipelines = (env: NodeJS.ProcessEnv): boolean => Boolean(env.BITBUCKET_BUILD_NUMBER);
+
 /**
  * Azure Pipelines build reasons (`Build.Reason`) that run after a merge: the CI trigger, or a run queued
  * by hand (e.g. to retry). Scheduled and other builds are not about a pull request, so they are skipped
@@ -158,9 +192,16 @@ const AZURE_MERGE_BUILD_REASONS = ['IndividualCI', 'BatchedCI', 'Manual'];
  * In Azure Pipelines a pull request build (build validation) is `open`, and a CI or manual build of the
  * target branch runs after a merge.
  */
-const parsePullRequestState = (payload: ReviewPayload, env: NodeJS.ProcessEnv, azureDevOps: boolean): PullRequestState => {
+const parsePullRequestState = (
+  payload: ReviewPayload,
+  env: NodeJS.ProcessEnv,
+  ci: { azureDevOps: boolean; bitbucket: boolean }
+): PullRequestState => {
   if (payload.pullRequestState) return payload.pullRequestState;
-  if (azureDevOps) return env.BUILD_REASON === 'PullRequest' ? 'open' : 'merged';
+  if (ci.azureDevOps) return env.BUILD_REASON === 'PullRequest' ? 'open' : 'merged';
+  // Bitbucket has no pull request merged trigger: a pull request pipeline is open, and a branch pipeline
+  // of the target branch runs after the merge.
+  if (ci.bitbucket) return env.BITBUCKET_PR_ID ? 'open' : 'merged';
   if (env.EVENTCATALOG_EVENT_ACTION !== 'closed') return 'open';
   return env.EVENTCATALOG_PR_MERGED === 'true' ? 'merged' : 'closed';
 };
@@ -217,9 +258,37 @@ const parseAzureDevOpsTarget = (
   };
 };
 
+/** The workspace and repository a Bitbucket pipeline runs in. */
+const bitbucketPipelineRepository = (env: NodeJS.ProcessEnv): { workspace?: string; repository?: string } => {
+  if (!isBitbucketPipelines(env)) return {};
+  const [fullWorkspace, fullRepository] = (env.BITBUCKET_REPO_FULL_NAME ?? '').split('/');
+  return {
+    workspace: env.BITBUCKET_WORKSPACE?.trim() || fullWorkspace || undefined,
+    repository: env.BITBUCKET_REPO_SLUG?.trim() || fullRepository || undefined,
+  };
+};
+
+/** The Bitbucket Cloud pull request this pipeline is for, from the Bitbucket Pipelines default variables. */
+const parseBitbucketTarget = (payload: ReviewPayload, env: NodeJS.ProcessEnv): BitbucketReviewTarget | undefined => {
+  const { workspace, repository } = bitbucketPipelineRepository(env);
+  if (!workspace || !repository) return undefined;
+
+  return {
+    branch: env.BITBUCKET_BRANCH || undefined,
+    commit: env.BITBUCKET_COMMIT || undefined,
+    destinationCommit: env.BITBUCKET_PR_DESTINATION_COMMIT || undefined,
+    pipeline: env.BITBUCKET_PIPELINE_UUID || undefined,
+    prNumber: parseOptionalInteger(payload.prNumber ?? env.BITBUCKET_PR_ID),
+    repository,
+    token: env.EVENTCATALOG_BITBUCKET_TOKEN || undefined,
+    workspace,
+  };
+};
+
 /**
- * Where the catalog is hosted: set explicitly, or an Azure Repos URL (`…/_git/…`), or otherwise the CI
- * system the agent runs in (Azure Pipelines → Azure Repos, anything else → GitHub).
+ * Where the catalog is hosted: set explicitly, or a repository URL that names its host (Azure Repos'
+ * `…/_git/…`, `bitbucket.org`), or otherwise the CI system the agent runs in (Azure Pipelines → Azure
+ * Repos, Bitbucket Pipelines → Bitbucket, anything else → GitHub).
  */
 const parseCatalogProvider = (payload: ReviewPayload, env: NodeJS.ProcessEnv): SourceControlProvider => {
   const explicit = (payload.catalogProvider || env.EVENTCATALOG_CATALOG_PROVIDER)?.trim();
@@ -232,7 +301,33 @@ const parseCatalogProvider = (payload: ReviewPayload, env: NodeJS.ProcessEnv): S
 
   const catalogRepo = payload.catalogRepo || env.EVENTCATALOG_CATALOG_REPO || '';
   if (catalogRepo.includes('/_git/')) return 'azure-devops';
-  return isAzurePipelines(env) ? 'azure-devops' : 'github';
+  if (isBitbucketUrl(catalogRepo)) return 'bitbucket';
+  if (isAzurePipelines(env)) return 'azure-devops';
+  return isBitbucketPipelines(env) ? 'bitbucket' : 'github';
+};
+
+/**
+ * Why a CI run has nothing to review, when its CI system says so up front: an Azure Pipelines build
+ * for neither a pull request nor a merge, or a Bitbucket pipeline of a tag. (A scheduled Bitbucket
+ * pipeline is found later, from the API.)
+ */
+const ciSkipReason = (
+  payload: ReviewPayload,
+  env: NodeJS.ProcessEnv,
+  targets: { azureDevOps?: AzureDevOpsReviewTarget; bitbucket?: BitbucketReviewTarget }
+): string | undefined => {
+  if (payload.pullRequestState) return undefined;
+
+  const buildReason = env.BUILD_REASON ?? '';
+  if (targets.azureDevOps && buildReason !== 'PullRequest' && !AZURE_MERGE_BUILD_REASONS.includes(buildReason)) {
+    return `This Azure Pipelines build (reason: ${buildReason || 'unknown'}) is not for a pull request or a merge, so there is nothing to review.`;
+  }
+
+  if (targets.bitbucket && env.BITBUCKET_TAG) {
+    return `This Bitbucket pipeline built the tag ${env.BITBUCKET_TAG}, not a pull request or a merge, so there is nothing to review.`;
+  }
+
+  return undefined;
 };
 
 export const resolveConfig = (payload: ReviewPayload | undefined, env: NodeJS.ProcessEnv): ReviewConfig => {
@@ -243,29 +338,34 @@ export const resolveConfig = (payload: ReviewPayload | undefined, env: NodeJS.Pr
   const azureDevOpsOrganization = parseAzureDevOpsOrganization(env);
   // A GitHub pull request wins, so an explicit GitHub payload behaves the same everywhere.
   const azureDevOps = github ? undefined : parseAzureDevOpsTarget(p, env, azureDevOpsOrganization);
-  const buildReason = env.BUILD_REASON ?? '';
-  const skipReason =
-    azureDevOps && !p.pullRequestState && buildReason !== 'PullRequest' && !AZURE_MERGE_BUILD_REASONS.includes(buildReason)
-      ? `This Azure Pipelines build (reason: ${buildReason || 'unknown'}) is not for a pull request or a merge, so there is nothing to review.`
-      : undefined;
+  const bitbucket = github || azureDevOps ? undefined : parseBitbucketTarget(p, env);
+  const skipReason = ciSkipReason(p, env, { azureDevOps, bitbucket });
+  const catalogProvider = parseCatalogProvider(p, env);
 
   return {
     adrs: parseCommaList(p.adrs ?? env.EVENTCATALOG_ADRS),
     azureDevOps,
     azureDevOpsOrganization,
     baseSha: p.baseSha || env.EVENTCATALOG_BASE_SHA,
+    bitbucket,
+    bitbucketWorkspace: bitbucketPipelineRepository(env).workspace,
     catalogPath: p.catalogPath || env.EVENTCATALOG_CATALOG_PATH || 'eventcatalog',
-    catalogProvider: parseCatalogProvider(p, env),
+    catalogProvider,
     catalogRef: p.catalogRef || env.EVENTCATALOG_CATALOG_REF || 'main',
     catalogRepo: p.catalogRepo || env.EVENTCATALOG_CATALOG_REPO,
-    catalogToken: p.catalogToken || env.EVENTCATALOG_CATALOG_TOKEN,
+    // In Bitbucket, one workspace or project access token can cover both repositories, so the source
+    // token is the default for a Bitbucket catalog.
+    catalogToken:
+      p.catalogToken ||
+      env.EVENTCATALOG_CATALOG_TOKEN ||
+      (bitbucket && catalogProvider === 'bitbucket' ? bitbucket.token : undefined),
     catalogUrl: p.catalogUrl || env.EVENTCATALOG_CATALOG_URL,
     github,
     headSha: p.headSha || env.EVENTCATALOG_HEAD_SHA,
     ignorePaths: ignorePaths.length > 0 ? ignorePaths : DEFAULT_DIFF_IGNORE_PATHS,
     model: p.model || env.EVENTCATALOG_MODEL || env.MODEL || 'anthropic/claude-sonnet-4-6',
     pullRequestBody: p.pullRequestBody,
-    pullRequestState: parsePullRequestState(p, env, Boolean(azureDevOps)),
+    pullRequestState: parsePullRequestState(p, env, { azureDevOps: Boolean(azureDevOps), bitbucket: Boolean(bitbucket) }),
     schemaExtensions: schemaExtensions.length > 0 ? schemaExtensions : DEFAULT_SCHEMA_EXTENSIONS,
     skipReason,
     thinkingLevel: env.THINKING_LEVEL || 'medium',
@@ -274,6 +374,7 @@ export const resolveConfig = (payload: ReviewPayload | undefined, env: NodeJS.Pr
       env.EVENTCATALOG_WORKSPACE ||
       env.GITHUB_WORKSPACE ||
       env.BUILD_SOURCESDIRECTORY ||
+      env.BITBUCKET_CLONE_DIR ||
       env.WORKSPACE ||
       process.cwd(),
   };

@@ -3,7 +3,7 @@ import { isAzurePipelines, resolveConfig, type ReviewPayload } from '@/src/confi
 import { checkoutCatalog } from '@/src/utils/checkout-catalog';
 
 /**
- * Checks out the catalog repository into `eventcatalog/`, on GitHub or Azure DevOps:
+ * Checks out the catalog repository into `eventcatalog/`, from GitHub, Azure DevOps or Bitbucket:
  *
  *   tsx src/checkout-catalog.ts [--payload '<json>']
  *

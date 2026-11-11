@@ -8,9 +8,9 @@ import { resolveCatalogPath } from '@/src/utils/eventcatalog-utils';
 
 /**
  * Checks out the catalog repository into the catalog path, for CI systems with no checkout step that can
- * do it (the GitHub Action uses actions/checkout instead; the Azure Pipelines template runs
- * `src/checkout-catalog.ts`). It fetches only the tip of `catalog-ref`, like actions/checkout, and works with a catalog on GitHub or
- * Azure DevOps. The token is sent through the environment for each command and never stored in the
+ * do it (the GitHub Action uses actions/checkout instead; the Azure Pipelines template and the Bitbucket
+ * Pipelines script run `src/checkout-catalog.ts`). It fetches only the tip of `catalog-ref`, like
+ * actions/checkout, and works with a catalog on any provider. The token is sent through the environment for each command and never stored in the
  * checkout's git config, so the agent working in the catalog can't read it from there.
  */
 

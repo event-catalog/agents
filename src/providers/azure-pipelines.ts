@@ -1,23 +1,11 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import type { AzureDevOpsReviewTarget, ReviewConfig } from '@/src/config';
 import { findMergedPullRequest } from '@/src/providers/azure-devops';
+import { commitParents, git, resolveCommit } from '@/src/utils/git';
 
 /**
  * What an Azure Pipelines build needs from git and the API before it can review: the commits to diff,
  * and for a build after a merge, the pull request that merged.
  */
-
-const execFileAsync = promisify(execFile);
-
-const git = async (workspace: string, args: string[]): Promise<string> =>
-  (await execFileAsync('git', ['-C', workspace, ...args])).stdout.trim();
-
-const hasCommit = (workspace: string, sha: string): Promise<boolean> =>
-  git(workspace, ['cat-file', '-e', `${sha}^{commit}`]).then(
-    () => true,
-    () => false
-  );
 
 /**
  * The commits to diff, from the commit the build checked out. A pull request build checks out the merge
@@ -26,9 +14,10 @@ const hasCommit = (workspace: string, sha: string): Promise<boolean> =>
  * parent, when there is one, is the source branch.
  */
 export const resolveMergeRange = async (workspace: string): Promise<{ baseSha: string; headSha: string }> => {
-  const [commit, firstParent, secondParent] = (await git(workspace, ['rev-list', '--parents', '-n', '1', 'HEAD'])).split(/\s+/);
+  const commit = await git(workspace, ['rev-parse', 'HEAD']);
+  const [firstParent, secondParent] = await commitParents(workspace, commit);
 
-  if (!commit || !firstParent) {
+  if (!firstParent) {
     throw new Error(
       'Cannot find the commits to compare: the checked-out commit has no parent. Check out the repository with `fetchDepth: 0` so the agent can diff the pull request.'
     );
@@ -60,7 +49,7 @@ const resolveMergedPullRequest = async (config: ReviewConfig, target: AzureDevOp
   if (config.baseSha && config.headSha) return withPullRequest;
 
   const range =
-    merged.targetCommit && (await hasCommit(config.workspace, merged.targetCommit))
+    merged.targetCommit && (await resolveCommit(config.workspace, merged.targetCommit))
       ? { baseSha: merged.targetCommit, headSha: commit }
       : await resolveMergeRange(config.workspace);
   return { ...withPullRequest, ...range };
