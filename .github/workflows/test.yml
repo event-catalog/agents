@@ -10,8 +10,10 @@ on:
 permissions:
   contents: read
 
+# A new push cancels the older run for the same pull request or branch. Pull requests and pushes never
+# share a group, so a late pull request run can't cancel a run on main.
 concurrency:
-  group: test-${{ github.ref }}
+  group: test-${{ github.event_name }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -1,8 +1,8 @@
 # EventCatalog Agents
 
 AI agents that keep your [EventCatalog](https://www.eventcatalog.dev) in sync with your code, and
-review your pull requests against it. They run in your own CI, in **GitHub Actions** or **Azure
-Pipelines**, with the model provider and key you choose.
+review your pull requests against it. They run in your own CI, in **GitHub Actions**, **Azure
+Pipelines** or **Bitbucket Pipelines**, with the model provider and key you choose.
 
 ![ADR Compliance commenting on a pull request](docs/images/github-adr-compliance.png)
 
@@ -15,7 +15,8 @@ catalog for your team to review.
 
 [Introduction](https://www.eventcatalog.dev/docs/development/agents/set-up-code-to-docs) ·
 [Set up with GitHub](https://www.eventcatalog.dev/docs/development/agents/set-up-code-to-docs/github) ·
-[Set up with Azure DevOps](https://www.eventcatalog.dev/docs/development/agents/set-up-code-to-docs/azure-devops)
+[Set up with Azure DevOps](https://www.eventcatalog.dev/docs/development/agents/set-up-code-to-docs/azure-devops) ·
+[Set up with Bitbucket](https://www.eventcatalog.dev/docs/development/agents/set-up-code-to-docs/bitbucket)
 
 ### Breaking Changes
 
@@ -24,7 +25,8 @@ lists the consumers and their owners.
 
 [Introduction](https://www.eventcatalog.dev/docs/development/agents/set-up-breaking-changes) ·
 [Set up with GitHub](https://www.eventcatalog.dev/docs/development/agents/set-up-breaking-changes/github) ·
-[Set up with Azure DevOps](https://www.eventcatalog.dev/docs/development/agents/set-up-breaking-changes/azure-devops)
+[Set up with Azure DevOps](https://www.eventcatalog.dev/docs/development/agents/set-up-breaking-changes/azure-devops) ·
+[Set up with Bitbucket](https://www.eventcatalog.dev/docs/development/agents/set-up-breaking-changes/bitbucket)
 
 ### ADR Compliance
 
@@ -33,7 +35,8 @@ comments when it conflicts with one.
 
 [Introduction](https://www.eventcatalog.dev/docs/development/agents/set-up-adr-compliance) ·
 [Set up with GitHub](https://www.eventcatalog.dev/docs/development/agents/set-up-adr-compliance/github) ·
-[Set up with Azure DevOps](https://www.eventcatalog.dev/docs/development/agents/set-up-adr-compliance/azure-devops)
+[Set up with Azure DevOps](https://www.eventcatalog.dev/docs/development/agents/set-up-adr-compliance/azure-devops) ·
+[Set up with Bitbucket](https://www.eventcatalog.dev/docs/development/agents/set-up-adr-compliance/bitbucket)
 
 ## Development
 
