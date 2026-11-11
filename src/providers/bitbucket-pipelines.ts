@@ -47,6 +47,12 @@ const normaliseMessage = (message: string): string => message.replace(/\r\n/g, '
  *   below the last of them. Bitbucket doesn't record which strategy merged a pull request, so the
  *   commits are recognised by their messages, which a rebase keeps: when the last commits on the target
  *   branch carry the pull request's commit messages, they are its commits. Otherwise it was squashed.
+ *   If the source branch merged the target branch in to stay up to date, the target branch commit it
+ *   merged is the base, not the commit below the pull request's first commit.
+ *
+ * Known limit: when the source branch merged in another branch's commits, the pull request lists more
+ * commits than the target branch's first-parent history shows, so the messages don't match and only the
+ * last commit is reviewed.
  */
 const resolveMergedRange = async (
   workspace: string,
@@ -71,9 +77,29 @@ const resolveMergedRange = async (
   const sorted = (values: string[]) => values.map(normaliseMessage).sort().join('\0');
   if (onBranch.length !== count || sorted(onBranch) !== sorted(messages ?? [])) return firstParent;
 
+  const synced = await syncedTargetCommit(workspace, commit, count);
+  if (synced) return synced;
+
   const base = await resolveCommit(workspace, `${commit}~${count}`);
   if (!base) throw new Error(SHALLOW_CLONE);
   return base;
+};
+
+/**
+ * For a fast-forward of a source branch that merged the target branch in: the target branch commit the
+ * newest of those merges brought in. `commit~count` would follow the source branch below the merge to
+ * where it forked, and the diff would include everything the target branch gained in between. It is the
+ * base only if exactly the pull request's `count` commits are reachable from `commit` and not from it.
+ */
+const syncedTargetCommit = async (workspace: string, commit: string, count: number): Promise<string | undefined> => {
+  const chain = (await git(workspace, ['rev-list', '--first-parent', `-n${count}`, commit])).split('\n').filter(Boolean);
+  for (const sha of chain) {
+    const [, mergedIn] = await commitParents(workspace, sha);
+    if (!mergedIn) continue;
+    const between = Number(await git(workspace, ['rev-list', '--count', `${mergedIn}..${commit}`]));
+    return between === count ? mergedIn : undefined;
+  }
+  return undefined;
 };
 
 /**

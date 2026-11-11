@@ -514,6 +514,23 @@ describe('the commits a pipeline diffs', () => {
     expect(config).toMatchObject({ baseSha: shas.base, headSha: head });
   });
 
+  test('a fast-forwarded pull request that merged the target branch in diffs from the commit it merged', async () => {
+    // main: initial ─ base. feature: initial ─ feature ─ merge of base ─ F2. main fast-forwards to F2.
+    await git('checkout', '-q', '-B', 'synced', shas.feature);
+    await git('merge', '-q', '--no-ff', '-m', 'Merge main into feature', shas.base);
+    await writeFile(join(workspace, 'f2.txt'), 'f2\n');
+    await git('add', '-A');
+    await git('commit', '-qm', 'F2');
+    const head = await git('rev-parse', 'HEAD');
+    mergedPullRequests([{ id: 10, merge_commit: { hash: head.slice(0, 12) } }], ['F2', 'Merge main into feature', 'feature']);
+
+    const config = await resolvePullRequestContext(
+      resolveConfig({ workspace }, { ...BRANCH_PIPELINE_ENV, BITBUCKET_COMMIT: head })
+    );
+
+    expect(config).toMatchObject({ baseSha: shas.base, headSha: head });
+  });
+
   test('a squash whose commit differs from the pull request commits diffs only the squashed commit', async () => {
     const head = await commitOnto(shas.base, ['Merged in feature (pull request #9)']);
     mergedPullRequests([{ id: 9, merge_commit: { hash: head.slice(0, 12) } }], ['one', 'two']);
