@@ -293,7 +293,6 @@ type PullRequest = {
   source?: { branch?: { name?: string }; commit?: { hash?: string } };
   destination?: { branch?: { name?: string }; commit?: { hash?: string } };
   merge_commit?: { hash?: string } | null;
-  reviewers?: { uuid?: string }[];
   updated_on?: string;
   links?: { html?: { href?: string } };
 };
@@ -415,15 +414,9 @@ export const createBitbucketCatalog = (
       });
 
       if (existing[0]) {
-        const path = `/pullrequests/${existing[0].id}`;
-        // An update without `reviewers` can remove the reviewers people added, so send them back as they are.
-        const { reviewers = [] } = await api.call<PullRequest>('GET', path);
-        const updated = await api.call<PullRequest>('PUT', path, {
-          body: {
-            title: fittedTitle,
-            description,
-            reviewers: reviewers.filter((reviewer) => reviewer.uuid).map(({ uuid }) => ({ uuid })),
-          },
+        // Bitbucket keeps the reviewers people added when an update leaves `reviewers` out (checked live).
+        const updated = await api.call<PullRequest>('PUT', `/pullrequests/${existing[0].id}`, {
+          body: { title: fittedTitle, description },
         });
         const url = updated?.links?.html?.href ?? bitbucketPullRequestUrl(repository, existing[0].id);
         console.error(`[eventcatalog:catalog-pr] Updated catalog pull request: ${url}`);

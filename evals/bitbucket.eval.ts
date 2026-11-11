@@ -649,21 +649,18 @@ describe('catalog pull requests in Bitbucket', () => {
     );
   });
 
-  test('updates the open pull request for the same branch, keeping its reviewers', async () => {
-    const calls = mockBitbucket({
-      'GET /pullrequests': { values: [{ id: 42 }] },
-      'GET /pullrequests/42': { id: 42, reviewers: [{ uuid: '{reviewer}', display_name: 'Dana' }] },
-      'PUT /pullrequests/42': { id: 42 },
-    });
+  test('updates the open pull request for the same branch', async () => {
+    const calls = mockBitbucket({ 'GET /pullrequests': { values: [{ id: 42 }] }, 'PUT /pullrequests/42': { id: 42 } });
 
     await createOrUpdateCatalogPullRequest(config, {
       impactPlan: plan,
       result: { prTitle: 't', prSummary: 's', sourcePrSummary: '' },
     });
 
-    expect(calls.map((call) => call.method)).toEqual(['GET', 'GET', 'PUT']);
+    expect(calls.map((call) => call.method)).toEqual(['GET', 'PUT']);
     expect(calls[0].url.searchParams.get('state')).toBe('OPEN');
-    expect(calls[2].body).toMatchObject({ title: 't', reviewers: [{ uuid: '{reviewer}' }] });
+    // Bitbucket keeps the pull request's reviewers when `reviewers` is left out.
+    expect(calls[1].body).toEqual({ title: 't', description: expect.any(String) });
   });
 
   test('preflight checks the repository and the branch', async () => {
